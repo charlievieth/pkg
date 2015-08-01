@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,33 @@ type Config struct {
 	Context build.Context
 }
 
+type Corpus struct {
+	ctxt     build.Context
+	dirs     map[string]*Directory
+	srcDirs  []string
+	MaxDepth int
+}
+
+type treeBuilder struct {
+	c        *Corpus
+	maxDepth int
+}
+
+func NewCorpus() *Corpus {
+	ctxt := build.Default
+	ctxt.GOPATH = os.Getenv("GOPATH")
+	ctxt.GOROOT = runtime.GOROOT()
+	srcDirs := ctxt.SrcDirs()
+	dirs := make([]*Directory, len(srcDirs))
+	// for i := 0; i < len(srcDirs); i++ {
+	// 	if d :=  {
+
+	// 	}
+	// }
+	_ = dirs
+	return nil
+}
+
 // Conventional name for directories containing test data.
 // Excluded from directory trees.
 //
@@ -51,11 +79,39 @@ type Directory struct {
 	// GoFiles  map[string]struct{}
 }
 
-func (c *Config) Update(dir *Directory) *Directory {
-	return c.updateDirTree(dir, token.NewFileSet())
+func (c *Corpus) treeBuilder() *treeBuilder {
+	return &treeBuilder{c: c, maxDepth: c.MaxDepth}
 }
 
-func (c *Config) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
+func (c *Corpus) updateEnv() {
+	path := os.Getenv("GOPATH")
+	root := runtime.GOROOT()
+	if path != c.ctxt.GOPATH || root != c.ctxt.GOROOT {
+		c.ctxt.GOPATH = path
+		c.ctxt.GOROOT = root
+		c.srcDirs = c.ctxt.SrcDirs()
+		for _, d := range c.srcDirs {
+			if _, ok := c.dirs[d]; !ok {
+				delete(c.dirs, d)
+			}
+		}
+	}
+}
+
+func (c *Corpus) Update(dir *Directory) {
+	c.updateEnv()
+	t := c.treeBuilder()
+	for _, path := range c.srcDirs {
+		fset := token.NewFileSet()
+		if _, ok := c.dirs[path]; ok {
+			c.dirs[path] = t.updateDirTree(c.dirs[path], fset)
+		} else {
+			c.dirs[path] = t.newDirTree(fset, path, filepath.Base(path), 0, false)
+		}
+	}
+}
+
+func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
 	fi, err := os.Stat(dir.Path)
 	if err != nil {
 		return nil
@@ -76,13 +132,13 @@ func (c *Config) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
 					ch := make(chan *Directory)
 					dirchs = append(dirchs, ch)
 					go func(d string) {
-						ch <- c.newDirTree(fset, filepath.Join(dir.Path, d), d,
+						ch <- t.newDirTree(fset, filepath.Join(dir.Path, d), d,
 							dir.Depth+1, dir.Internal)
 					}(d)
 				}
 			case isGoFile(d):
 				hasPkgFiles = true
-				if !dir.HasPkg && dir.PkgName == "" && c.matchFile(dir.Path, d) {
+				if !dir.HasPkg && dir.PkgName == "" && t.c.matchFile(dir.Path, d) {
 					name, ok := includePkg(filepath.Join(dir.Path, d), fset)
 					if ok {
 						dir.HasPkg = true
@@ -108,7 +164,7 @@ func (c *Config) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
 			ch := make(chan *Directory)
 			dirchs = append(dirchs, ch)
 			go func(d *Directory) {
-				ch <- c.updateDirTree(d, fset)
+				ch <- t.updateDirTree(d, fset)
 			}(d)
 		}
 	}
@@ -131,9 +187,15 @@ func sameFile(fs1, fs2 os.FileInfo) bool {
 		fs1.IsDir() == fs2.IsDir()
 }
 
-func (c *Config) newDirTree(fset *token.FileSet, path, name string,
+func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	depth int, internal bool) *Directory {
-
+	if depth >= t.maxDepth {
+		return &Directory{
+			Depth: depth,
+			Path:  path,
+			Name:  name,
+		}
+	}
 	list, err := readdirnames(path)
 	if err != nil {
 		return nil // Change
@@ -156,11 +218,11 @@ func (c *Config) newDirTree(fset *token.FileSet, path, name string,
 			ch := make(chan *Directory)
 			dirchs = append(dirchs, ch)
 			go func(d string) {
-				ch <- c.newDirTree(fset, filepath.Join(path, d), d, depth+1,
+				ch <- t.newDirTree(fset, filepath.Join(path, d), d, depth+1,
 					internal)
 			}(d)
 		case isGoFile(d):
-			if pkgName == "" && c.matchFile(path, d) {
+			if pkgName == "" && t.c.matchFile(path, d) {
 				name, ok := includePkg(filepath.Join(path, d), fset)
 				if ok {
 					hasPkgFiles = true
@@ -190,8 +252,8 @@ func (c *Config) newDirTree(fset *token.FileSet, path, name string,
 	}
 }
 
-func (c *Config) matchFile(dir, name string) bool {
-	ok, err := c.Context.MatchFile(dir, name)
+func (c *Corpus) matchFile(dir, name string) bool {
+	ok, err := c.ctxt.MatchFile(dir, name)
 	return ok && err == nil
 }
 
@@ -204,13 +266,14 @@ func includePkg(path string, fset *token.FileSet) (string, bool) {
 }
 
 // TODO: make private when done testing
-func (c *Config) NewDirectory(root string) *Directory {
-	root = filepath.Clean(root)
-	d, err := os.Stat(root)
-	if err != nil || !d.IsDir() {
-		return nil
-	}
-	return c.newDirTree(token.NewFileSet(), root, d.Name(), 0, isInternal(root))
+func (c *Corpus) NewDirectory(root string) *Directory {
+	// root = filepath.Clean(root)
+	// d, err := os.Stat(root)
+	// if err != nil || !d.IsDir() {
+	// 	return nil
+	// }
+	// return c.newDirTree(token.NewFileSet(), root, d.Name(), 0, isInternal(root))
+	return nil
 }
 
 func isInternal(p string) bool {
@@ -240,6 +303,42 @@ func (dir *Directory) Lookup(filepath string) *Directory {
 		i++
 	}
 	return dir
+}
+
+func (c *Corpus) ListImports(path string) []string {
+	if c.dirs == nil || len(c.dirs) == 0 {
+		return nil
+	}
+	if fi, err := os.Stat(path); err == nil {
+		if fi.IsDir() {
+			path = filepath.Dir(path)
+		} else {
+			path = filepath.Clean(path)
+		}
+	}
+	list := make([]string, 0, 1024)
+	for _, d := range c.dirs {
+		d.listPkgs(path, &list)
+	}
+	sort.Strings(list)
+	return list
+}
+
+func dirPath(p string) string {
+	if fi, err := os.Stat(p); err == nil {
+		if fi.IsDir() {
+			return filepath.Dir(p)
+		}
+		return filepath.Clean(p)
+	}
+	v := filepath.VolumeName(p)
+	for p != v {
+		p = filepath.Dir(p)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return p
 }
 
 func (dir *Directory) ImportList(path string) []string {
