@@ -6,7 +6,9 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -14,6 +16,8 @@ var (
 	_ = time.ANSIC
 	_ = fmt.Sprint("")
 )
+
+const pathSeparator = string(os.PathSeparator)
 
 type File struct {
 	Name string
@@ -44,20 +48,101 @@ type Directory struct {
 	Info     os.FileInfo
 	Dirs     map[string]*Directory
 	Depth    int
+	// GoFiles  map[string]struct{}
 }
 
-func (c *Config) newDirTree(fset *token.FileSet, filepath, name string,
-	depth int, internal bool) *Directory {
+func (c *Config) Update(dir *Directory) *Directory {
+	return c.updateDirTree(dir, token.NewFileSet())
+}
 
-	list, err := readdirnames(filepath)
-	if err != nil {
-		return nil // Change
-	}
-	fi, err := os.Stat(filepath)
+func (c *Config) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
+	fi, err := os.Stat(dir.Path)
 	if err != nil {
 		return nil
 	}
-	if !internal && name == "internal" {
+	var dirchs []chan *Directory
+	switch {
+	case !sameFile(fi, dir.Info):
+		dir.Info = fi
+		list, err := readdirmap(dir.Path)
+		if err != nil {
+			return nil
+		}
+		hasPkgFiles := false
+		for d := range list {
+			switch {
+			case isPkgDir(d):
+				if _, ok := dir.Dirs[d]; !ok {
+					ch := make(chan *Directory)
+					dirchs = append(dirchs, ch)
+					go func(d string) {
+						ch <- c.newDirTree(fset, filepath.Join(dir.Path, d), d,
+							dir.Depth+1, dir.Internal)
+					}(d)
+				}
+			case isGoFile(d):
+				hasPkgFiles = true
+				if !dir.HasPkg && dir.PkgName == "" && c.matchFile(dir.Path, d) {
+					name, ok := includePkg(filepath.Join(dir.Path, d), fset)
+					if ok {
+						dir.HasPkg = true
+						dir.PkgName = name
+					}
+				}
+			}
+		}
+		for n := range dir.Dirs {
+			if !list[n] {
+				delete(dir.Dirs, n)
+			}
+		}
+		if !hasPkgFiles && dir.HasPkg {
+			dir.HasPkg = false
+			dir.PkgName = ""
+		}
+		if len(dir.Dirs) == 0 && !dir.HasPkg {
+			return nil
+		}
+	default:
+		for _, d := range dir.Dirs {
+			ch := make(chan *Directory)
+			dirchs = append(dirchs, ch)
+			go func(d *Directory) {
+				ch <- c.updateDirTree(d, fset)
+			}(d)
+		}
+	}
+	for _, ch := range dirchs {
+		if d := <-ch; d != nil {
+			if dir.Dirs == nil {
+				dir.Dirs = make(map[string]*Directory)
+			}
+			dir.Dirs[d.Name] = d
+		}
+	}
+	return dir
+}
+
+func sameFile(fs1, fs2 os.FileInfo) bool {
+	return fs1.ModTime() == fs2.ModTime() &&
+		fs1.Size() == fs2.Size() &&
+		fs1.Mode() == fs2.Mode() &&
+		fs1.Name() == fs2.Name() &&
+		fs1.IsDir() == fs2.IsDir()
+}
+
+func (c *Config) newDirTree(fset *token.FileSet, path, name string,
+	depth int, internal bool) *Directory {
+
+	list, err := readdirnames(path)
+	if err != nil {
+		return nil // Change
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if !internal && isInternal(name) {
 		internal = true
 	}
 	var (
@@ -71,16 +156,15 @@ func (c *Config) newDirTree(fset *token.FileSet, filepath, name string,
 			ch := make(chan *Directory)
 			dirchs = append(dirchs, ch)
 			go func(d string) {
-				ch <- c.newDirTree(fset, path.Join(filepath, d), d, depth+1,
+				ch <- c.newDirTree(fset, filepath.Join(path, d), d, depth+1,
 					internal)
 			}(d)
 		case isGoFile(d):
-			if pkgName == "" {
-				af, err := parser.ParseFile(fset, path.Join(filepath, d), nil,
-					parser.PackageClauseOnly)
-				if err == nil && af.Name != nil {
+			if pkgName == "" && c.matchFile(path, d) {
+				name, ok := includePkg(filepath.Join(path, d), fset)
+				if ok {
 					hasPkgFiles = true
-					pkgName = af.Name.Name
+					pkgName = name
 				}
 			}
 		}
@@ -95,7 +179,7 @@ func (c *Config) newDirTree(fset *token.FileSet, filepath, name string,
 		return nil
 	}
 	return &Directory{
-		Path:     filepath,
+		Path:     path,
 		Name:     name,
 		PkgName:  pkgName,
 		HasPkg:   hasPkgFiles,
@@ -106,12 +190,87 @@ func (c *Config) newDirTree(fset *token.FileSet, filepath, name string,
 	}
 }
 
+func (c *Config) matchFile(dir, name string) bool {
+	ok, err := c.Context.MatchFile(dir, name)
+	return ok && err == nil
+}
+
+func includePkg(path string, fset *token.FileSet) (string, bool) {
+	af, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+	if err == nil && af.Name != nil && af.Name.Name != "main" {
+		return af.Name.Name, true
+	}
+	return "", false
+}
+
+// TODO: make private when done testing
 func (c *Config) NewDirectory(root string) *Directory {
+	root = filepath.Clean(root)
 	d, err := os.Stat(root)
 	if err != nil || !d.IsDir() {
 		return nil
 	}
-	internal := path.Base(root) == "internal"
-	fset := token.NewFileSet()
-	return c.newDirTree(fset, root, d.Name(), 0, internal)
+	return c.newDirTree(token.NewFileSet(), root, d.Name(), 0, isInternal(root))
+}
+
+func isInternal(p string) bool {
+	return filepath.Base(p) == "internal"
+}
+
+func splitPath(p string) []string {
+	p = strings.TrimPrefix(p, pathSeparator)
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, pathSeparator)
+}
+
+func (dir *Directory) Lookup(filepath string) *Directory {
+	d := splitPath(dir.Path)
+	p := splitPath(filepath)
+	i := 0
+	for i < len(d) {
+		if i >= len(p) || d[i] != p[i] {
+			return nil
+		}
+		i++
+	}
+	for dir != nil && i < len(p) {
+		dir = dir.Dirs[p[i]]
+		i++
+	}
+	return dir
+}
+
+func (dir *Directory) ImportList(path string) []string {
+	if fi, err := os.Stat(path); err == nil {
+		if fi.IsDir() {
+			path = filepath.Dir(path)
+		} else {
+			path = filepath.Clean(path)
+		}
+	}
+	list := make([]string, 0, 1024)
+	dir.listPkgs(path, &list)
+	sort.Strings(list)
+	return list
+}
+
+func (dir *Directory) listPkgs(path string, list *[]string) {
+	if dir.Internal && !filepath.HasPrefix(dir.Path, path) {
+		return
+	}
+	*list = append(*list, dir.Path)
+	for _, d := range dir.Dirs {
+		d.listPkgs(path, list)
+	}
+}
+
+func listDirs(dir *Directory, list *[]string, path string) {
+	*list = append(*list, dir.Path)
+	if dir.Dirs != nil {
+		for _, d := range dir.Dirs {
+			listDirs(d, list, path)
+		}
+	}
 }

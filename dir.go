@@ -51,6 +51,18 @@ func readdirnames(name string) ([]string, error) {
 	return f.Readdirnames(-1)
 }
 
+func readdirmap(name string) (map[string]bool, error) {
+	s, err := readdirnames(name)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]bool, len(s))
+	for i := 0; i < len(s); i++ {
+		m[s[i]] = true
+	}
+	return m, nil
+}
+
 func isPkgDir(name string) bool {
 	return validName(name) && !isWhitelisted(name)
 }
