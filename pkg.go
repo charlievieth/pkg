@@ -5,19 +5,12 @@ package pkg
 //  - Consider making pkg selection version aware
 
 import (
-	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
-)
-
-var (
-	_ = time.ANSIC
-	_ = fmt.Sprint("")
 )
 
 type treeBuilder struct {
