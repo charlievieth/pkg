@@ -79,3 +79,11 @@ func isGoFile(name string) bool {
 func validName(s string) bool {
 	return len(s) > 0 && s[0] != '_' && s[0] != '.'
 }
+
+func sameFile(fs1, fs2 os.FileInfo) bool {
+	return fs1.ModTime() == fs2.ModTime() &&
+		fs1.Size() == fs2.Size() &&
+		fs1.Mode() == fs2.Mode() &&
+		fs1.Name() == fs2.Name() &&
+		fs1.IsDir() == fs2.IsDir()
+}

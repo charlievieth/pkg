@@ -6,12 +6,10 @@ package pkg
 
 import (
 	"fmt"
-	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -33,13 +31,6 @@ func newTreeBuilder(c *Corpus) *treeBuilder {
 		depth = 512
 	}
 	return &treeBuilder{c: c, maxDepth: depth}
-}
-
-func newContext() (*build.Context, []string) {
-	c := build.Default
-	c.GOPATH = os.Getenv("GOPATH")
-	c.GOROOT = runtime.GOROOT()
-	return &c, c.SrcDirs()
 }
 
 // Conventional name for directories containing test data.
@@ -87,7 +78,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 			case isGoFile(d):
 				hasPkgFiles = true
 				if !dir.HasPkg && dir.PkgName == "" && t.c.matchFile(dir.Path, d) {
-					name, ok := includePkg(filepath.Join(dir.Path, d), fset)
+					name, ok := parsePkgName(filepath.Join(dir.Path, d), fset)
 					if ok {
 						dir.HasPkg = true
 						dir.PkgName = name
@@ -163,7 +154,7 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 			}(d)
 		case isGoFile(d):
 			if pkgName == "" && t.c.matchFile(path, d) {
-				name, ok := includePkg(filepath.Join(path, d), fset)
+				name, ok := parsePkgName(filepath.Join(path, d), fset)
 				if ok {
 					hasPkgFiles = true
 					pkgName = name
@@ -192,7 +183,7 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	}
 }
 
-func includePkg(path string, fset *token.FileSet) (string, bool) {
+func parsePkgName(path string, fset *token.FileSet) (string, bool) {
 	af, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
 	if err == nil && af.Name != nil && af.Name.Name != "main" {
 		return af.Name.Name, true
@@ -277,12 +268,4 @@ func listDirs(dir *Directory, list *[]string, path string) {
 			listDirs(d, list, path)
 		}
 	}
-}
-
-func sameFile(fs1, fs2 os.FileInfo) bool {
-	return fs1.ModTime() == fs2.ModTime() &&
-		fs1.Size() == fs2.Size() &&
-		fs1.Mode() == fs2.Mode() &&
-		fs1.Name() == fs2.Name() &&
-		fs1.IsDir() == fs2.IsDir()
 }

@@ -125,3 +125,10 @@ func (c *Corpus) matchFile(dir, name string) bool {
 	ok, err := c.ctxt.MatchFile(dir, name)
 	return ok && err == nil
 }
+
+func newContext() (*build.Context, []string) {
+	c := build.Default
+	c.GOPATH = os.Getenv("GOPATH")
+	c.GOROOT = runtime.GOROOT()
+	return &c, c.SrcDirs()
+}
