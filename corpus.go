@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"sync"
 )
 
 type Corpus struct {
@@ -14,6 +15,7 @@ type Corpus struct {
 	dirs     map[string]*Directory
 	srcDirs  []string
 	MaxDepth int
+	mu       sync.RWMutex
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
@@ -25,6 +27,7 @@ func NewCorpus() *Corpus {
 		ctxt:    ctxt,
 		dirs:    dirs,
 		srcDirs: srcDirs,
+		mu:      sync.RWMutex{},
 	}
 	t := newTreeBuilder(c)
 	for _, path := range srcDirs {
@@ -40,7 +43,8 @@ func NewCorpus() *Corpus {
 //
 // ListImports, returns the list of available imports for path.
 func (c *Corpus) ListImports(path string) []string {
-	c.updateContext()
+	c.Update()
+	c.mu.RLock()
 	if c.dirs == nil || len(c.dirs) == 0 {
 		return nil // []string{} ???
 	}
@@ -56,11 +60,14 @@ func (c *Corpus) ListImports(path string) []string {
 		d.listPkgs(path, &list)
 	}
 	sort.Strings(list)
+	c.mu.RUnlock()
 	return list
 }
 
 func (c *Corpus) Lookup(path string) *Directory {
-	c.updateContext()
+	c.Update()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	for p, dir := range c.dirs {
 		if filepath.HasPrefix(path, p) {
 			if d := dir.Lookup(path); d != nil {
@@ -71,49 +78,8 @@ func (c *Corpus) Lookup(path string) *Directory {
 	return nil
 }
 
-func (c *Corpus) newTreeBuilder() *treeBuilder {
-	depth := c.MaxDepth
-	if depth <= 0 {
-		depth = 512
-	}
-	return &treeBuilder{c: c, maxDepth: depth}
-}
-
-func (c *Corpus) updateEnv() {
-	path := os.Getenv("GOPATH")
-	root := runtime.GOROOT()
-	if path != c.ctxt.GOPATH || root != c.ctxt.GOROOT {
-		c.ctxt.GOPATH = path
-		c.ctxt.GOROOT = root
-		c.srcDirs = c.ctxt.SrcDirs()
-		for _, d := range c.srcDirs {
-			if _, ok := c.dirs[d]; !ok {
-				delete(c.dirs, d)
-			}
-		}
-	}
-}
-
-func (c *Corpus) updateContext() {
-	if c.ctxt == nil {
-		c.ctxt, c.srcDirs = newContext()
-		return
-	}
-	path := os.Getenv("GOPATH")
-	root := runtime.GOROOT()
-	if path != c.ctxt.GOPATH || root != c.ctxt.GOROOT {
-		c.ctxt.GOPATH = path
-		c.ctxt.GOROOT = root
-		c.srcDirs = c.ctxt.SrcDirs()
-		for _, d := range c.srcDirs {
-			if _, ok := c.dirs[d]; !ok {
-				delete(c.dirs, d)
-			}
-		}
-	}
-}
-
 func (c *Corpus) Update() {
+	c.mu.Lock()
 	c.updateContext()
 	t := newTreeBuilder(c)
 	seen := make(map[string]bool)
@@ -132,20 +98,30 @@ func (c *Corpus) Update() {
 			delete(c.dirs, path)
 		}
 	}
+	c.mu.Unlock()
+}
+
+func (c *Corpus) updateContext() {
+	// Assumes Write-Lock
+	if c.ctxt == nil {
+		c.ctxt, c.srcDirs = newContext()
+		return
+	}
+	path := os.Getenv("GOPATH")
+	root := runtime.GOROOT()
+	if path != c.ctxt.GOPATH || root != c.ctxt.GOROOT {
+		c.ctxt.GOPATH = path
+		c.ctxt.GOROOT = root
+		c.srcDirs = c.ctxt.SrcDirs()
+		for _, d := range c.srcDirs {
+			if _, ok := c.dirs[d]; !ok {
+				delete(c.dirs, d)
+			}
+		}
+	}
 }
 
 func (c *Corpus) matchFile(dir, name string) bool {
 	ok, err := c.ctxt.MatchFile(dir, name)
 	return ok && err == nil
-}
-
-// TODO: make private when done testing
-func (c *Corpus) NewDirectory(root string) *Directory {
-	// root = filepath.Clean(root)
-	// d, err := os.Stat(root)
-	// if err != nil || !d.IsDir() {
-	// 	return nil
-	// }
-	// return c.newDirTree(token.NewFileSet(), root, d.Name(), 0, isInternal(root))
-	return nil
 }
