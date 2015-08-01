@@ -1,5 +1,9 @@
 package pkg
 
+// TODO:
+// 	- Consider removing Corupus.MaxDepth
+//  - Consider making pkg selection version aware
+
 import (
 	"fmt"
 	"go/build"
@@ -18,48 +22,24 @@ var (
 	_ = fmt.Sprint("")
 )
 
-const pathSeparator = string(os.PathSeparator)
-
-type File struct {
-	Name string
-	Info os.FileInfo
-}
-
-type Package struct {
-	Name     string
-	Internal bool
-	Files    map[string]*File
-}
-
-type Config struct {
-	Context build.Context
-}
-
-type Corpus struct {
-	ctxt     build.Context
-	dirs     map[string]*Directory
-	srcDirs  []string
-	MaxDepth int
-}
-
 type treeBuilder struct {
 	c        *Corpus
 	maxDepth int
 }
 
-func NewCorpus() *Corpus {
-	ctxt := build.Default
-	ctxt.GOPATH = os.Getenv("GOPATH")
-	ctxt.GOROOT = runtime.GOROOT()
-	srcDirs := ctxt.SrcDirs()
-	dirs := make([]*Directory, len(srcDirs))
-	// for i := 0; i < len(srcDirs); i++ {
-	// 	if d :=  {
+func newTreeBuilder(c *Corpus) *treeBuilder {
+	depth := c.MaxDepth
+	if depth <= 0 {
+		depth = 512
+	}
+	return &treeBuilder{c: c, maxDepth: depth}
+}
 
-	// 	}
-	// }
-	_ = dirs
-	return nil
+func newContext() (*build.Context, []string) {
+	c := build.Default
+	c.GOPATH = os.Getenv("GOPATH")
+	c.GOROOT = runtime.GOROOT()
+	return &c, c.SrcDirs()
 }
 
 // Conventional name for directories containing test data.
@@ -77,38 +57,6 @@ type Directory struct {
 	Dirs     map[string]*Directory
 	Depth    int
 	// GoFiles  map[string]struct{}
-}
-
-func (c *Corpus) treeBuilder() *treeBuilder {
-	return &treeBuilder{c: c, maxDepth: c.MaxDepth}
-}
-
-func (c *Corpus) updateEnv() {
-	path := os.Getenv("GOPATH")
-	root := runtime.GOROOT()
-	if path != c.ctxt.GOPATH || root != c.ctxt.GOROOT {
-		c.ctxt.GOPATH = path
-		c.ctxt.GOROOT = root
-		c.srcDirs = c.ctxt.SrcDirs()
-		for _, d := range c.srcDirs {
-			if _, ok := c.dirs[d]; !ok {
-				delete(c.dirs, d)
-			}
-		}
-	}
-}
-
-func (c *Corpus) Update(dir *Directory) {
-	c.updateEnv()
-	t := c.treeBuilder()
-	for _, path := range c.srcDirs {
-		fset := token.NewFileSet()
-		if _, ok := c.dirs[path]; ok {
-			c.dirs[path] = t.updateDirTree(c.dirs[path], fset)
-		} else {
-			c.dirs[path] = t.newDirTree(fset, path, filepath.Base(path), 0, false)
-		}
-	}
 }
 
 func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
@@ -179,17 +127,9 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 	return dir
 }
 
-func sameFile(fs1, fs2 os.FileInfo) bool {
-	return fs1.ModTime() == fs2.ModTime() &&
-		fs1.Size() == fs2.Size() &&
-		fs1.Mode() == fs2.Mode() &&
-		fs1.Name() == fs2.Name() &&
-		fs1.IsDir() == fs2.IsDir()
-}
-
 func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	depth int, internal bool) *Directory {
-	if depth >= t.maxDepth {
+	if t.maxDepth != 0 && depth >= t.maxDepth {
 		return &Directory{
 			Depth: depth,
 			Path:  path,
@@ -252,11 +192,6 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	}
 }
 
-func (c *Corpus) matchFile(dir, name string) bool {
-	ok, err := c.ctxt.MatchFile(dir, name)
-	return ok && err == nil
-}
-
 func includePkg(path string, fset *token.FileSet) (string, bool) {
 	af, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
 	if err == nil && af.Name != nil && af.Name.Name != "main" {
@@ -265,32 +200,21 @@ func includePkg(path string, fset *token.FileSet) (string, bool) {
 	return "", false
 }
 
-// TODO: make private when done testing
-func (c *Corpus) NewDirectory(root string) *Directory {
-	// root = filepath.Clean(root)
-	// d, err := os.Stat(root)
-	// if err != nil || !d.IsDir() {
-	// 	return nil
-	// }
-	// return c.newDirTree(token.NewFileSet(), root, d.Name(), 0, isInternal(root))
-	return nil
-}
-
 func isInternal(p string) bool {
 	return filepath.Base(p) == "internal"
 }
 
 func splitPath(p string) []string {
-	p = strings.TrimPrefix(p, pathSeparator)
+	p = strings.TrimPrefix(p, string(os.PathSeparator))
 	if p == "" {
 		return nil
 	}
-	return strings.Split(p, pathSeparator)
+	return strings.Split(p, string(os.PathSeparator))
 }
 
-func (dir *Directory) Lookup(filepath string) *Directory {
-	d := splitPath(dir.Path)
-	p := splitPath(filepath)
+func (dir *Directory) Lookup(path string) *Directory {
+	d := splitPath(dir.Path) // dir.Path assumed to be clearn
+	p := splitPath(filepath.Clean(path))
 	i := 0
 	for i < len(d) {
 		if i >= len(p) || d[i] != p[i] {
@@ -303,25 +227,6 @@ func (dir *Directory) Lookup(filepath string) *Directory {
 		i++
 	}
 	return dir
-}
-
-func (c *Corpus) ListImports(path string) []string {
-	if c.dirs == nil || len(c.dirs) == 0 {
-		return nil
-	}
-	if fi, err := os.Stat(path); err == nil {
-		if fi.IsDir() {
-			path = filepath.Dir(path)
-		} else {
-			path = filepath.Clean(path)
-		}
-	}
-	list := make([]string, 0, 1024)
-	for _, d := range c.dirs {
-		d.listPkgs(path, &list)
-	}
-	sort.Strings(list)
-	return list
 }
 
 func dirPath(p string) string {
@@ -372,4 +277,12 @@ func listDirs(dir *Directory, list *[]string, path string) {
 			listDirs(d, list, path)
 		}
 	}
+}
+
+func sameFile(fs1, fs2 os.FileInfo) bool {
+	return fs1.ModTime() == fs2.ModTime() &&
+		fs1.Size() == fs2.Size() &&
+		fs1.Mode() == fs2.Mode() &&
+		fs1.Name() == fs2.Name() &&
+		fs1.IsDir() == fs2.IsDir()
 }
