@@ -48,7 +48,7 @@ func (c *Corpus) ListImports(path string) []string {
 	if c.dirs == nil || len(c.dirs) == 0 {
 		return nil // []string{} ???
 	}
-	list := make([]string, 0, 1024)
+	list := make([]string, 0, 512)
 	for _, d := range c.dirs {
 		d.listPkgs(filepathBase(path), &list)
 	}

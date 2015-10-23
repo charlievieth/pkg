@@ -232,7 +232,7 @@ func dirPath(p string) string {
 }
 
 func (dir *Directory) ImportList(path string) []string {
-	list := make([]string, 0, 1024)
+	list := make([]string, 0, 512)
 	dir.listPkgs(filepathBase(path), &list)
 	sort.Strings(list)
 	return list
