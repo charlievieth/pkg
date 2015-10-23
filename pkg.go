@@ -213,6 +213,7 @@ func (dir *Directory) Lookup(path string) *Directory {
 	return dir
 }
 
+// TODO (CEV): Not used anywhere, remove?
 func dirPath(p string) string {
 	if fi, err := os.Stat(p); err == nil {
 		if fi.IsDir() {
@@ -231,27 +232,25 @@ func dirPath(p string) string {
 }
 
 func (dir *Directory) ImportList(path string) []string {
-	if fi, err := os.Stat(path); err == nil {
-		if fi.IsDir() {
-			path = filepath.Dir(path)
-		} else {
-			path = filepath.Clean(path)
-		}
-	}
 	list := make([]string, 0, 1024)
-	dir.listPkgs(path, &list)
+	dir.listPkgs(filepathBase(path), &list)
 	sort.Strings(list)
 	return list
 }
 
 func (dir *Directory) listPkgs(path string, list *[]string) {
-	if dir.Internal && !filepath.HasPrefix(dir.Path, path) {
+	if dir.Internal && !dir.matchInternal(path) {
 		return
 	}
 	*list = append(*list, dir.Path)
 	for _, d := range dir.Dirs {
 		d.listPkgs(path, list)
 	}
+}
+
+// matchInternal, returns is path can import 'internal' directory d.
+func (d *Directory) matchInternal(path string) bool {
+	return path != "" && d.Internal && sameRoot(internalRoot(d.Path), path)
 }
 
 func listDirs(dir *Directory, list *[]string, path string) {
@@ -261,4 +260,22 @@ func listDirs(dir *Directory, list *[]string, path string) {
 			listDirs(d, list, path)
 		}
 	}
+}
+
+// internalRoot, returns the parent directory of an internal package.
+func internalRoot(path string) string {
+	if n := strings.LastIndex(path, "internal"); n != -1 {
+		root := filepath.Dir(path[:n])
+		// Support Go 1.4
+		if filepath.Base(root) == "pkg" {
+			return filepath.Dir(root)
+		}
+		return root
+	}
+	return path
+}
+
+// sameRoot, returns if path is inside the directory tree rooted at root.
+func sameRoot(root, path string) bool {
+	return len(root) <= len(path) && root == path[:len(root)]
 }

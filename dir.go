@@ -2,7 +2,7 @@ package pkg
 
 import (
 	"os"
-	"path"
+	"path/filepath"
 )
 
 var whitelisted = map[string]bool{
@@ -35,7 +35,7 @@ var whitelisted = map[string]bool{
 }
 
 func isWhitelisted(filename string) bool {
-	key := path.Ext(filename)
+	key := filepath.Ext(filename)
 	if key == "" {
 		key = filename
 	}
@@ -73,7 +73,7 @@ func isDir(name string) bool {
 }
 
 func isGoFile(name string) bool {
-	return validName(name) && path.Ext(name) == ".go"
+	return validName(name) && filepath.Ext(name) == ".go"
 }
 
 func validName(s string) bool {
@@ -86,4 +86,25 @@ func sameFile(fs1, fs2 os.FileInfo) bool {
 		fs1.Mode() == fs2.Mode() &&
 		fs1.Name() == fs2.Name() &&
 		fs1.IsDir() == fs2.IsDir()
+}
+
+func filepathBase(path string) string {
+	path = filepath.Clean(path)
+	if path == "" {
+		return path
+	}
+	if fi, err := os.Stat(path); err == nil {
+		if !fi.IsDir() {
+			return filepath.Dir(path)
+		}
+	} else {
+		// Maybe an unsaved buffer?  Try the parent directory.
+		if isWhitelisted(path) {
+			p := filepath.Dir(path)
+			if isDir(p) {
+				return p
+			}
+		}
+	}
+	return path
 }

@@ -48,16 +48,9 @@ func (c *Corpus) ListImports(path string) []string {
 	if c.dirs == nil || len(c.dirs) == 0 {
 		return nil // []string{} ???
 	}
-	if fi, err := os.Stat(path); err == nil {
-		if fi.IsDir() {
-			path = filepath.Dir(path)
-		} else {
-			path = filepath.Clean(path)
-		}
-	}
 	list := make([]string, 0, 1024)
 	for _, d := range c.dirs {
-		d.listPkgs(path, &list)
+		d.listPkgs(filepathBase(path), &list)
 	}
 	sort.Strings(list)
 	c.mu.RUnlock()
