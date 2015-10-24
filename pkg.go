@@ -233,16 +233,20 @@ func dirPath(p string) string {
 
 func (dir *Directory) ImportList(path string) []string {
 	list := make([]string, 0, 512)
-	dir.listPkgs(filepathBase(path), &list)
+	dir.listPkgs(filepathDir(path), &list)
 	sort.Strings(list)
 	return list
 }
 
+// listPkgs, appends the absolute paths of Go packages importable from path to
+// list, if path == "" internal import restrictions are ignored.
 func (dir *Directory) listPkgs(path string, list *[]string) {
 	if dir.Internal && !dir.matchInternal(path) {
 		return
 	}
-	*list = append(*list, dir.Path)
+	if dir.HasPkg {
+		*list = append(*list, dir.Path)
+	}
 	for _, d := range dir.Dirs {
 		d.listPkgs(path, list)
 	}
@@ -250,7 +254,7 @@ func (dir *Directory) listPkgs(path string, list *[]string) {
 
 // matchInternal, returns is path can import 'internal' directory d.
 func (d *Directory) matchInternal(path string) bool {
-	return path != "" && d.Internal && sameRoot(internalRoot(d.Path), path)
+	return d.Internal && path != "" && sameRoot(internalRoot(d.Path), path)
 }
 
 func listDirs(dir *Directory, list *[]string, path string) {

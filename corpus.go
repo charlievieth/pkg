@@ -21,7 +21,6 @@ type Corpus struct {
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
 func NewCorpus() *Corpus {
 	ctxt, srcDirs := newContext()
-	fset := token.NewFileSet()
 	dirs := make(map[string]*Directory)
 	c := &Corpus{
 		ctxt:    ctxt,
@@ -29,6 +28,7 @@ func NewCorpus() *Corpus {
 		srcDirs: srcDirs,
 		mu:      sync.RWMutex{},
 	}
+	fset := token.NewFileSet()
 	t := newTreeBuilder(c)
 	for _, path := range srcDirs {
 		dir := t.newDirTree(fset, path, filepath.Base(path), 0, false)
@@ -45,15 +45,15 @@ func NewCorpus() *Corpus {
 func (c *Corpus) ListImports(path string) []string {
 	c.Update()
 	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if c.dirs == nil || len(c.dirs) == 0 {
 		return nil // []string{} ???
 	}
 	list := make([]string, 0, 512)
 	for _, d := range c.dirs {
-		d.listPkgs(filepathBase(path), &list)
+		d.listPkgs(filepathDir(path), &list)
 	}
 	sort.Strings(list)
-	c.mu.RUnlock()
 	return list
 }
 
@@ -73,7 +73,9 @@ func (c *Corpus) Lookup(path string) *Directory {
 
 func (c *Corpus) Update() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.updateContext()
+
 	t := newTreeBuilder(c)
 	seen := make(map[string]bool)
 	for _, path := range c.srcDirs {
@@ -85,13 +87,13 @@ func (c *Corpus) Update() {
 			c.dirs[path] = t.newDirTree(fset, path, filepath.Base(path), 0, false)
 		}
 	}
+
 	// Cleanup root directories
 	for path := range seen {
 		if !seen[path] {
 			delete(c.dirs, path)
 		}
 	}
-	c.mu.Unlock()
 }
 
 func (c *Corpus) updateContext() {

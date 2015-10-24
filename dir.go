@@ -88,7 +88,11 @@ func sameFile(fs1, fs2 os.FileInfo) bool {
 		fs1.IsDir() == fs2.IsDir()
 }
 
-func filepathBase(path string) string {
+// filepathDir, returns the directory of path.  If path is a file the parent
+// directory is returned.  If path is a directory it is cleaned and returned.
+// If the path does not exist, but it's parent directory does the parent
+// directory is returned.  All else failing the path is returned.
+func filepathDir(path string) string {
 	path = filepath.Clean(path)
 	if path == "" {
 		return path
@@ -99,7 +103,7 @@ func filepathBase(path string) string {
 		}
 	} else {
 		// Maybe an unsaved buffer?  Try the parent directory.
-		if isWhitelisted(path) {
+		if os.IsNotExist(err) && isWhitelisted(path) {
 			p := filepath.Dir(path)
 			if isDir(p) {
 				return p
