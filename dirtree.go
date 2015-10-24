@@ -40,7 +40,6 @@ type Directory struct {
 	Info     os.FileInfo
 	Dirs     map[string]*Directory
 	Depth    int
-	// GoFiles  map[string]struct{}
 }
 
 func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
