@@ -63,6 +63,7 @@ func readdirmap(name string) (map[string]bool, error) {
 	return m, nil
 }
 
+// isPkgDir, returns if name is a possible package directory.
 func isPkgDir(name string) bool {
 	return validName(name) && !isWhitelisted(name)
 }
@@ -90,25 +91,14 @@ func sameFile(fs1, fs2 os.FileInfo) bool {
 
 // filepathDir, returns the directory of path.  If path is a file the parent
 // directory is returned.  If path is a directory it is cleaned and returned.
-// If the path does not exist, but it's parent directory does the parent
-// directory is returned.  All else failing the path is returned.
 func filepathDir(path string) string {
 	path = filepath.Clean(path)
 	if path == "" {
 		return path
 	}
-	if fi, err := os.Stat(path); err == nil {
-		if !fi.IsDir() {
-			return filepath.Dir(path)
-		}
-	} else {
-		// Maybe an unsaved buffer?  Try the parent directory.
-		if os.IsNotExist(err) && isWhitelisted(path) {
-			p := filepath.Dir(path)
-			if isDir(p) {
-				return p
-			}
-		}
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		return path
 	}
-	return path
+	return filepath.Dir(path)
 }
