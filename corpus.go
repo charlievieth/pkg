@@ -127,3 +127,65 @@ func newContext() (*build.Context, []string) {
 	c.GOROOT = runtime.GOROOT()
 	return &c, c.SrcDirs()
 }
+
+type Package struct {
+	Root   string // root of Go tree where this package lives
+	Path   string // directory path
+	Name   string // package name
+	Goroot bool   // package found in Go root
+
+	GoFiles        []string // .go source files (excluding TestGoFiles, XTestGoFiles)
+	IgnoredGoFiles []string // .go source files ignored for this build
+	TestGoFiles    []string // _test.go files in package
+}
+
+func (c *Corpus) newPackage(dir string, fset *token.FileSet) *Package {
+	names, err := readdirnames(dir)
+	if err != nil {
+		return nil // Change
+	}
+	var (
+		testGoFiles    []string
+		goFiles        []string
+		ignoredGoFiles []string
+		pkgName        string
+		isPkg          bool
+	)
+	for _, name := range names {
+		switch {
+		case isGoTestFile(name):
+			testGoFiles = append(testGoFiles, name)
+		case isGoFile(name):
+			if !c.matchFile(dir, name) {
+				ignoredGoFiles = append(ignoredGoFiles, name)
+				break
+			}
+			goFiles = append(goFiles, name)
+			if pkgName == "" {
+				n, ok := parsePkgName(filepath.Join(dir, name), fset)
+				if ok {
+					isPkg = true
+					pkgName = n
+				}
+			}
+		}
+	}
+	if !isPkg {
+		return nil
+	}
+	p := Package{
+		Path:           dir,
+		Name:           pkgName,
+		TestGoFiles:    testGoFiles,
+		GoFiles:        goFiles,
+		IgnoredGoFiles: ignoredGoFiles,
+	}
+	for _, root := range c.ctxt.SrcDirs() {
+		if sameRoot(root, dir) {
+			p.Root = root
+			p.Goroot = (root == c.ctxt.GOROOT)
+			break
+		}
+	}
+	return &p
+}

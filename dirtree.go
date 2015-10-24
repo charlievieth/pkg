@@ -112,6 +112,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 
 func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	depth int, internal bool) *Directory {
+
 	if t.maxDepth != 0 && depth >= t.maxDepth {
 		return &Directory{
 			Depth: depth,

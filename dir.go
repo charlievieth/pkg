@@ -3,6 +3,8 @@ package pkg
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 var whitelisted = map[string]bool{
@@ -47,8 +49,13 @@ func readdirnames(name string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	return f.Readdirnames(-1)
+	names, err := f.Readdirnames(-1)
+	f.Close()
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func readdirmap(name string) (map[string]bool, error) {
@@ -75,6 +82,10 @@ func isDir(name string) bool {
 
 func isGoFile(name string) bool {
 	return validName(name) && filepath.Ext(name) == ".go"
+}
+
+func isGoTestFile(name string) bool {
+	return validName(name) && strings.HasSuffix(name, "_test.go")
 }
 
 func validName(s string) bool {
