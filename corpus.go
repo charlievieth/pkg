@@ -139,10 +139,26 @@ type Package struct {
 	TestGoFiles    []string // _test.go files in package
 }
 
+func (c *Corpus) updatePackage(p *Package) {
+
+}
+
 func (c *Corpus) newPackage(dir string, fset *token.FileSet) *Package {
 	names, err := readdirnames(dir)
 	if err != nil {
 		return nil // Change
+	}
+	// Exit early if the package is an executable.
+	if sort.SearchStrings(names, "main.go") != len(names) {
+		name, ok := parsePkgName(filepath.Join(dir, "main.go"), fset)
+		if ok && name == "main" {
+			return nil
+		}
+	}
+	// Remove non-Go files
+	names = FilterList(names, isGoFile)
+	if len(names) == 0 {
+		return nil
 	}
 	var (
 		testGoFiles    []string
@@ -153,13 +169,11 @@ func (c *Corpus) newPackage(dir string, fset *token.FileSet) *Package {
 	)
 	for _, name := range names {
 		switch {
+		case !c.matchFile(dir, name):
+			ignoredGoFiles = append(ignoredGoFiles, name)
 		case isGoTestFile(name):
 			testGoFiles = append(testGoFiles, name)
-		case isGoFile(name):
-			if !c.matchFile(dir, name) {
-				ignoredGoFiles = append(ignoredGoFiles, name)
-				break
-			}
+		default:
 			goFiles = append(goFiles, name)
 			if pkgName == "" {
 				n, ok := parsePkgName(filepath.Join(dir, name), fset)

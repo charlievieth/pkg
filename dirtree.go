@@ -176,9 +176,19 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	}
 }
 
+// TODO (CEV): Return if name is 'main', this will speed up scanning.
 func parsePkgName(path string, fset *token.FileSet) (string, bool) {
-	af, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
-	if err == nil && af.Name != nil && af.Name.Name != "main" {
+	name, ok := parseFileName(path, fset)
+	if ok && name != "main" {
+		return name, true
+	}
+	return "", false
+}
+
+// TODO (CEV): merge with parsePkgName
+func parseFileName(path string, fset *token.FileSet) (string, bool) {
+	af, _ := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+	if af != nil && af.Name != nil {
 		return af.Name.Name, true
 	}
 	return "", false

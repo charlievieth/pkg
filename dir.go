@@ -113,3 +113,16 @@ func filepathDir(path string) string {
 	}
 	return filepath.Dir(path)
 }
+
+type FilterFunc func(string) bool
+
+func FilterList(list []string, fn FilterFunc) []string {
+	n := 0
+	for i := 0; i < len(list); i++ {
+		if fn(list[i]) {
+			list[n] = list[i]
+			n++
+		}
+	}
+	return list[:n]
+}
