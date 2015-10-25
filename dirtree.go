@@ -186,12 +186,12 @@ func parsePkgName(path string, fset *token.FileSet) (string, bool) {
 }
 
 // TODO (CEV): merge with parsePkgName
-func parseFileName(path string, fset *token.FileSet) (string, bool) {
+func parseFileName(path string, fset *token.FileSet) (name string, ok bool) {
 	af, _ := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
 	if af != nil && af.Name != nil {
-		return af.Name.Name, true
+		name = af.Name.Name
 	}
-	return "", false
+	return name, name != ""
 }
 
 func isInternal(p string) bool {
@@ -264,7 +264,7 @@ func (dir *Directory) listPkgs(path string, list *[]string) {
 
 // matchInternal, returns is path can import 'internal' directory d.
 func (d *Directory) matchInternal(path string) bool {
-	return d.Internal && path != "" && sameRoot(internalRoot(d.Path), path)
+	return d.Internal && path != "" && sameRoot(path, internalRoot(d.Path))
 }
 
 func listDirs(dir *Directory, list *[]string, path string) {
@@ -290,6 +290,6 @@ func internalRoot(path string) string {
 }
 
 // sameRoot, returns if path is inside the directory tree rooted at root.
-func sameRoot(root, path string) bool {
-	return len(root) <= len(path) && root == path[:len(root)]
+func sameRoot(path, root string) bool {
+	return len(path) >= len(root) && path[0:len(root)] == root
 }

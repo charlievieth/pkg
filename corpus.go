@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"fmt"
 	"go/build"
 	"go/token"
 	"os"
@@ -128,45 +129,57 @@ func newContext() (*build.Context, []string) {
 	return &c, c.SrcDirs()
 }
 
+type ImportMode int
+
+const (
+	// If FindPackage is set, NewPackage stops after reading ony package
+	// statement.
+	FindPackage ImportMode = 1 << iota
+
+	// If CheckPackage is set, NewPackage checks all package statements.
+	CheckPackage
+)
+
 type Package struct {
-	Root   string // root of Go tree where this package lives
-	Path   string // directory path
-	Name   string // package name
-	Goroot bool   // package found in Go root
+	Dir        string // directory path
+	Name       string // package name
+	ImportPath string // import path of package ("" if unknown)
+	Root       string // root of Go tree where this package lives
+	Goroot     bool   // package found in Go root
 
 	GoFiles        []string // .go source files (excluding TestGoFiles, XTestGoFiles)
 	IgnoredGoFiles []string // .go source files ignored for this build
 	TestGoFiles    []string // _test.go files in package
 }
 
+// IsCommand reports whether the package is considered a command to be installed
+// (not just a library). Packages named "main" are treated as commands.
+func (p *Package) IsCommand() bool {
+	return p.Name == "main"
+}
+
 func (c *Corpus) updatePackage(p *Package) {
 
 }
 
-func (c *Corpus) newPackage(dir string, fset *token.FileSet) *Package {
+func (c *Corpus) NewPackage(dir string) *Package {
+	p, _ := c.newPackage(dir, token.NewFileSet(), CheckPackage)
+	return p
+}
+
+func (c *Corpus) newPackage(dir string, fset *token.FileSet, mode ImportMode) (*Package, error) {
 	names, err := readdirnames(dir)
 	if err != nil {
-		return nil // Change
-	}
-	// Exit early if the package is an executable.
-	if sort.SearchStrings(names, "main.go") != len(names) {
-		name, ok := parsePkgName(filepath.Join(dir, "main.go"), fset)
-		if ok && name == "main" {
-			return nil
-		}
-	}
-	// Remove non-Go files
-	names = FilterList(names, isGoFile)
-	if len(names) == 0 {
-		return nil
+		return nil, err
 	}
 	var (
 		testGoFiles    []string
 		goFiles        []string
 		ignoredGoFiles []string
 		pkgName        string
-		isPkg          bool
 	)
+	// Remove non-Go files
+	names = FilterList(names, isGoFile)
 	for _, name := range names {
 		switch {
 		case !c.matchFile(dir, name):
@@ -175,31 +188,168 @@ func (c *Corpus) newPackage(dir string, fset *token.FileSet) *Package {
 			testGoFiles = append(testGoFiles, name)
 		default:
 			goFiles = append(goFiles, name)
-			if pkgName == "" {
-				n, ok := parsePkgName(filepath.Join(dir, name), fset)
-				if ok {
-					isPkg = true
-					pkgName = n
+			if mode&CheckPackage != 0 {
+				if n, ok := parseFileName(filepath.Join(dir, name), fset); ok {
+					switch pkgName {
+					case n:
+						// Ok
+					case "":
+						pkgName = n
+					default:
+						return nil, &MultiplePackageError{
+							Dir:      dir,
+							Packages: []string{pkgName, n},
+							Files:    []string{goFiles[0], name},
+						}
+					}
+				}
+			} else {
+				if pkgName == "" {
+					n, ok := parsePkgName(filepath.Join(dir, name), fset)
+					if ok {
+						pkgName = n
+					}
 				}
 			}
 		}
 	}
-	if !isPkg {
-		return nil
-	}
 	p := Package{
-		Path:           dir,
+		Dir:            dir,
 		Name:           pkgName,
 		TestGoFiles:    testGoFiles,
 		GoFiles:        goFiles,
 		IgnoredGoFiles: ignoredGoFiles,
 	}
-	for _, root := range c.ctxt.SrcDirs() {
-		if sameRoot(root, dir) {
-			p.Root = root
-			p.Goroot = (root == c.ctxt.GOROOT)
+	if pkgName == "" {
+		return &p, &NoGoError{Dir: dir}
+	}
+	// SrcDirs returns $GOPATH + "/src"
+	for _, srcDir := range c.ctxt.SrcDirs() {
+		if sameRoot(dir, srcDir) {
+			p.ImportPath = trimPathPrefix(dir, srcDir)
+			p.Root = filepath.Dir(srcDir)
+			p.Goroot = sameRoot(dir, c.ctxt.GOROOT)
 			break
 		}
 	}
-	return &p
+	return &p, nil
+}
+
+func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode) (*Package, error) {
+	names, err := readdirnames(dir)
+	if err != nil {
+		return nil, err
+	}
+	p := Package{
+		Dir: dir,
+	}
+	// SrcDirs returns $GOPATH + "/src"
+	for _, srcDir := range c.ctxt.SrcDirs() {
+		if sameRoot(dir, srcDir) {
+			p.ImportPath = trimPathPrefix(dir, srcDir)
+			p.Root = filepath.Dir(srcDir)
+			p.Goroot = sameRoot(dir, c.ctxt.GOROOT)
+			break
+		}
+	}
+	for _, name := range FilterList(names, isGoFile) {
+		switch {
+		case !c.matchFile(dir, name):
+			p.IgnoredGoFiles = append(p.IgnoredGoFiles, name)
+		case isGoTestFile(name):
+			p.TestGoFiles = append(p.TestGoFiles, name)
+		default:
+			// TODO (CEV): Check file before adding based on mode?
+			p.GoFiles = append(p.GoFiles, name)
+			if mode&CheckPackage != 0 {
+				if n, ok := parseFileName(filepath.Join(dir, name), fset); ok {
+					switch p.Name {
+					case n:
+						// Ok
+					case "":
+						p.Name = n
+					default:
+						return nil, &MultiplePackageError{
+							Dir:      dir,
+							Packages: []string{p.Name, n},
+							Files:    []string{p.GoFiles[0], name},
+						}
+					}
+				}
+			} else {
+				if p.Name == "" {
+					n, ok := parsePkgName(filepath.Join(dir, name), fset)
+					if ok {
+						p.Name = n
+					}
+				}
+			}
+		}
+	}
+	var pkgErr error
+	if p.Name == "" {
+		pkgErr = &NoGoError{Dir: dir}
+	}
+	return &p, pkgErr
+}
+
+func (p *Package) addFile(c *Corpus, fset *token.FileSet, dir, name string, mode ImportMode) error {
+	if !c.matchFile(dir, name) {
+		p.IgnoredGoFiles = append(p.IgnoredGoFiles, name)
+		return nil
+	}
+	if isGoTestFile(name) {
+		p.TestGoFiles = append(p.TestGoFiles, name)
+		return nil
+	}
+	p.GoFiles = append(p.GoFiles, name)
+	if mode&CheckPackage != 0 {
+		if n, ok := parseFileName(filepath.Join(dir, name), fset); ok {
+			switch p.Name {
+			case n:
+				// Ok
+			case "":
+				p.Name = n
+			default:
+				return &MultiplePackageError{
+					Dir:      dir,
+					Packages: []string{p.Name, n},
+					Files:    []string{p.GoFiles[0], name},
+				}
+			}
+		}
+		return nil
+	}
+	if p.Name == "" {
+		n, ok := parsePkgName(filepath.Join(dir, name), fset)
+		if ok {
+			p.Name = n
+		}
+	}
+	return nil
+}
+
+// NoGoError is the error used by Import to describe a directory
+// containing no buildable Go source files. (It may still contain
+// test files, files hidden by build tags, and so on.)
+type NoGoError struct {
+	Dir string
+}
+
+func (e *NoGoError) Error() string {
+	return "no buildable Go source files in " + e.Dir
+}
+
+// MultiplePackageError describes a directory containing
+// multiple buildable Go source files for multiple packages.
+type MultiplePackageError struct {
+	Dir      string   // directory containing files
+	Packages []string // package names found
+	Files    []string // corresponding files: Files[i] declares package Packages[i]
+}
+
+func (e *MultiplePackageError) Error() string {
+	// Error string limited to two entries for compatibility.
+	return fmt.Sprintf("found packages %s (%s) and %s (%s) in %s", e.Packages[0],
+		e.Files[0], e.Packages[1], e.Files[1], e.Dir)
 }

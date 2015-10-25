@@ -126,3 +126,10 @@ func FilterList(list []string, fn FilterFunc) []string {
 	}
 	return list[:n]
 }
+
+func trimPathPrefix(s, prefix string) string {
+	if sameRoot(s, prefix) {
+		return strings.TrimPrefix(s[len(prefix):], string(filepath.Separator))
+	}
+	return s
+}
