@@ -150,6 +150,8 @@ type Package struct {
 	GoFiles        []string // .go source files (excluding TestGoFiles, XTestGoFiles)
 	IgnoredGoFiles []string // .go source files ignored for this build
 	TestGoFiles    []string // _test.go files in package
+
+	mode ImportMode // ImportMode used when created
 }
 
 // IsCommand reports whether the package is considered a command to be installed
@@ -162,8 +164,8 @@ func (c *Corpus) updatePackage(p *Package) {
 
 }
 
-func (c *Corpus) NewPackage(dir string) *Package {
-	p, _ := c.newPackage(dir, token.NewFileSet(), CheckPackage)
+func (c *Corpus) NewPackage(dir string, mode ImportMode) *Package {
+	p, _ := c.newPackage(dir, token.NewFileSet(), mode)
 	return p
 }
 
@@ -241,7 +243,8 @@ func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode)
 		return nil, err
 	}
 	p := Package{
-		Dir: dir,
+		Dir:  dir,
+		mode: mode,
 	}
 	// SrcDirs returns $GOPATH + "/src"
 	for _, srcDir := range c.ctxt.SrcDirs() {
@@ -253,37 +256,8 @@ func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode)
 		}
 	}
 	for _, name := range FilterList(names, isGoFile) {
-		switch {
-		case !c.matchFile(dir, name):
-			p.IgnoredGoFiles = append(p.IgnoredGoFiles, name)
-		case isGoTestFile(name):
-			p.TestGoFiles = append(p.TestGoFiles, name)
-		default:
-			// TODO (CEV): Check file before adding based on mode?
-			p.GoFiles = append(p.GoFiles, name)
-			if mode&CheckPackage != 0 {
-				if n, ok := parseFileName(filepath.Join(dir, name), fset); ok {
-					switch p.Name {
-					case n:
-						// Ok
-					case "":
-						p.Name = n
-					default:
-						return nil, &MultiplePackageError{
-							Dir:      dir,
-							Packages: []string{p.Name, n},
-							Files:    []string{p.GoFiles[0], name},
-						}
-					}
-				}
-			} else {
-				if p.Name == "" {
-					n, ok := parsePkgName(filepath.Join(dir, name), fset)
-					if ok {
-						p.Name = n
-					}
-				}
-			}
+		if err := p.addFile(c, fset, name); err != nil {
+			return &p, err
 		}
 	}
 	var pkgErr error
@@ -293,8 +267,8 @@ func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode)
 	return &p, pkgErr
 }
 
-func (p *Package) addFile(c *Corpus, fset *token.FileSet, dir, name string, mode ImportMode) error {
-	if !c.matchFile(dir, name) {
+func (p *Package) addFile(c *Corpus, fset *token.FileSet, name string) error {
+	if !c.matchFile(p.Dir, name) {
 		p.IgnoredGoFiles = append(p.IgnoredGoFiles, name)
 		return nil
 	}
@@ -303,25 +277,25 @@ func (p *Package) addFile(c *Corpus, fset *token.FileSet, dir, name string, mode
 		return nil
 	}
 	p.GoFiles = append(p.GoFiles, name)
-	if mode&CheckPackage != 0 {
-		if n, ok := parseFileName(filepath.Join(dir, name), fset); ok {
-			switch p.Name {
-			case n:
-				// Ok
-			case "":
-				p.Name = n
-			default:
-				return &MultiplePackageError{
-					Dir:      dir,
-					Packages: []string{p.Name, n},
-					Files:    []string{p.GoFiles[0], name},
-				}
+	if p.mode&CheckPackage != 0 {
+		n, ok := parseFileName(filepath.Join(p.Dir, name), fset)
+		if !ok {
+			return nil
+		}
+		switch {
+		case p.Name == "":
+			p.Name = n
+		case p.Name != n:
+			return &MultiplePackageError{
+				Dir:      p.Dir,
+				Packages: []string{p.Name, n},
+				Files:    []string{p.GoFiles[0], name},
 			}
 		}
 		return nil
 	}
 	if p.Name == "" {
-		n, ok := parsePkgName(filepath.Join(dir, name), fset)
+		n, ok := parsePkgName(filepath.Join(p.Dir, name), fset)
 		if ok {
 			p.Name = n
 		}
