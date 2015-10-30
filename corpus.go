@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"errors"
 	"fmt"
 	"go/build"
 	"go/token"
@@ -129,6 +130,27 @@ func newContext() (*build.Context, []string) {
 	return &c, c.SrcDirs()
 }
 
+type File struct {
+	Name string
+	Path string
+	Info os.FileInfo
+}
+
+func NewFile(path string) (*File, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if fi.IsDir() {
+		return nil, errors.New("pkg: directory path: " + path)
+	}
+	return &File{
+		Name: filepath.Base(path),
+		Path: path,
+		Info: fi,
+	}, nil
+}
+
 type ImportMode int
 
 const (
@@ -165,76 +187,8 @@ func (c *Corpus) updatePackage(p *Package) {
 }
 
 func (c *Corpus) NewPackage(dir string, mode ImportMode) *Package {
-	p, _ := c.newPackage(dir, token.NewFileSet(), mode)
+	p, _ := c.importPackage(dir, token.NewFileSet(), mode)
 	return p
-}
-
-func (c *Corpus) newPackage(dir string, fset *token.FileSet, mode ImportMode) (*Package, error) {
-	names, err := readdirnames(dir)
-	if err != nil {
-		return nil, err
-	}
-	var (
-		testGoFiles    []string
-		goFiles        []string
-		ignoredGoFiles []string
-		pkgName        string
-	)
-	// Remove non-Go files
-	names = FilterList(names, isGoFile)
-	for _, name := range names {
-		switch {
-		case !c.matchFile(dir, name):
-			ignoredGoFiles = append(ignoredGoFiles, name)
-		case isGoTestFile(name):
-			testGoFiles = append(testGoFiles, name)
-		default:
-			goFiles = append(goFiles, name)
-			if mode&CheckPackage != 0 {
-				if n, ok := parseFileName(filepath.Join(dir, name), fset); ok {
-					switch pkgName {
-					case n:
-						// Ok
-					case "":
-						pkgName = n
-					default:
-						return nil, &MultiplePackageError{
-							Dir:      dir,
-							Packages: []string{pkgName, n},
-							Files:    []string{goFiles[0], name},
-						}
-					}
-				}
-			} else {
-				if pkgName == "" {
-					n, ok := parsePkgName(filepath.Join(dir, name), fset)
-					if ok {
-						pkgName = n
-					}
-				}
-			}
-		}
-	}
-	p := Package{
-		Dir:            dir,
-		Name:           pkgName,
-		TestGoFiles:    testGoFiles,
-		GoFiles:        goFiles,
-		IgnoredGoFiles: ignoredGoFiles,
-	}
-	if pkgName == "" {
-		return &p, &NoGoError{Dir: dir}
-	}
-	// SrcDirs returns $GOPATH + "/src"
-	for _, srcDir := range c.ctxt.SrcDirs() {
-		if sameRoot(dir, srcDir) {
-			p.ImportPath = trimPathPrefix(dir, srcDir)
-			p.Root = filepath.Dir(srcDir)
-			p.Goroot = sameRoot(dir, c.ctxt.GOROOT)
-			break
-		}
-	}
-	return &p, nil
 }
 
 func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode) (*Package, error) {
@@ -247,7 +201,7 @@ func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode)
 		mode: mode,
 	}
 	// SrcDirs returns $GOPATH + "/src"
-	for _, srcDir := range c.ctxt.SrcDirs() {
+	for _, srcDir := range c.srcDirs {
 		if sameRoot(dir, srcDir) {
 			p.ImportPath = trimPathPrefix(dir, srcDir)
 			p.Root = filepath.Dir(srcDir)
