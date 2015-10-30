@@ -92,12 +92,18 @@ func validName(s string) bool {
 	return len(s) > 0 && s[0] != '_' && s[0] != '.'
 }
 
-func sameFile(fs1, fs2 os.FileInfo) bool {
-	return fs1.ModTime() == fs2.ModTime() &&
-		fs1.Size() == fs2.Size() &&
-		fs1.Mode() == fs2.Mode() &&
-		fs1.Name() == fs2.Name() &&
-		fs1.IsDir() == fs2.IsDir()
+func sameFile(fi1, fi2 os.FileInfo) bool {
+	if fi1 == nil {
+		if fi2 == nil {
+			return true
+		}
+		return false
+	}
+	return fi1.ModTime() == fi2.ModTime() &&
+		fi1.Size() == fi2.Size() &&
+		fi1.Mode() == fi2.Mode() &&
+		fi1.Name() == fi2.Name() &&
+		fi1.IsDir() == fi2.IsDir()
 }
 
 // filepathDir, returns the directory of path.  If path is a file the parent

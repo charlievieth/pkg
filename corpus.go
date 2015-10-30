@@ -3,114 +3,17 @@ package pkg
 import (
 	"errors"
 	"fmt"
-	"go/build"
+	"go/parser"
 	"go/token"
+	"io/ioutil"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
 )
 
-type Context struct {
-	ctxt           *build.Context
-	srcDirs        []string
-	lastUpdate     time.Time
-	updateInterval time.Duration
-	mu             sync.RWMutex
-}
-
-func NewContext(ctxt *build.Context, updateInterval time.Duration) *Context {
-	if updateInterval == 0 {
-		updateInterval = time.Second
-	}
-	c := &Context{
-		ctxt:           ctxt,
-		updateInterval: updateInterval,
-	}
-	c.Update()
-	return c
-}
-
-func (c *Context) Context() *build.Context {
-	// WARN: We Copy-on-Write - so shouldnt need to lock
-	// make sure this is actually the case.
-	c.Update()
-	return c.ctxt
-}
-
-func (c *Context) SrcDirs() []string {
-	c.Update()
-	return c.srcDirs
-}
-
-func (c *Context) GOROOT() string {
-	c.Update()
-	return c.ctxt.GOROOT
-}
-
-func (c *Context) MatchFile(dir, name string) bool {
-	c.Update()
-	ok, err := c.ctxt.MatchFile(dir, name)
-	return ok && err == nil
-}
-
-func (c *Context) Update() {
-	if c.outdated() {
-		c.doUpdate()
-	}
-}
-
-func (c *Context) outdated() bool {
-	c.mu.RLock()
-	update := time.Since(c.lastUpdate) < c.updateInterval
-	c.mu.RUnlock()
-	return update
-}
-
-func (c *Context) doUpdate() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// Make sure it wasnt updated before the lock was acquired
-	if time.Since(c.lastUpdate) < c.updateInterval {
-		return
-	}
-	if c.ctxt == nil {
-		c.initDefault()
-	}
-	c.lastUpdate = time.Now()
-	path := os.Getenv("GOPATH")
-	root := runtime.GOROOT()
-	switch {
-	case path != c.ctxt.GOPATH || root != c.ctxt.GOROOT:
-		// Copy and replace on change
-		ctxt := *c.ctxt
-		ctxt.GOPATH = path
-		ctxt.GOROOT = root
-		srcDirs := ctxt.SrcDirs()
-		c.ctxt = &ctxt
-		c.srcDirs = srcDirs
-
-	case len(c.srcDirs) == 0:
-		// In case we just initialized a new Context
-		c.srcDirs = c.ctxt.SrcDirs()
-	}
-}
-
-func (c *Context) initDefault() {
-	ctxt := build.Default
-	ctxt.GOPATH = os.Getenv("GOPATH")
-	ctxt.GOROOT = runtime.GOROOT()
-	c.ctxt = &ctxt
-}
-
-func newContext() (*build.Context, []string) {
-	c := build.Default
-	c.GOPATH = os.Getenv("GOPATH")
-	c.GOROOT = runtime.GOROOT()
-	return &c, c.SrcDirs()
-}
+const maxOpenFiles = 200
 
 type Corpus struct {
 	ctxt       *Context
@@ -121,18 +24,23 @@ type Corpus struct {
 	MaxDepth int
 	mu       sync.RWMutex
 
+	PackageMode   ImportMode
+	IndexFileInfo bool
 	// WARN: New
 	IndexEnabled bool
 	IndexGoCode  bool
+
+	fsOpenGate chan bool
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
 func NewCorpus() *Corpus {
 	dirs := make(map[string]*Directory)
 	c := &Corpus{
-		ctxt: NewContext(nil, 0),
-		dirs: dirs,
-		mu:   sync.RWMutex{},
+		ctxt:       NewContext(nil, 0),
+		dirs:       dirs,
+		mu:         sync.RWMutex{},
+		fsOpenGate: make(chan bool, maxOpenFiles),
 	}
 	fset := token.NewFileSet()
 	t := newTreeBuilder(c)
@@ -219,40 +127,58 @@ func (c *Corpus) matchFile(dir, name string) (match bool) {
 }
 
 type File struct {
-	Name string
-	Path string
-	Info os.FileInfo
+	Name string      // file name
+	Path string      // absolute file path
+	Info os.FileInfo // info, if any
 }
 
-func NewFile(path string) (*File, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if fi.IsDir() {
-		return nil, errors.New("pkg: directory path: " + path)
-	}
-	return &File{
+func NewFile(path string, info bool) (*File, error) {
+	f := &File{
 		Name: filepath.Base(path),
 		Path: path,
-		Info: fi,
-	}, nil
+	}
+	if info {
+		fi, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if fi.IsDir() {
+			return nil, errors.New("pkg: directory path: " + path)
+		}
+	}
+	return f, nil
 }
+
+type ByFileName []*File
+
+func (f ByFileName) Len() int           { return len(f) }
+func (f ByFileName) Less(i, j int) bool { return f[i].Name < f[j].Name }
+func (f ByFileName) Swap(i, j int)      { f[i].Name, f[j].Name = f[j].Name, f[i].Name }
 
 type ImportMode int
 
 const (
-	// If FindPackage is set, NewPackage stops after reading ony package
+	// If FindPackageOnly is set, NewPackage stops after reading ony package
 	// statement.
-	FindPackage ImportMode = 1 << iota
+	FindPackageOnly ImportMode = 1 << iota
 
-	// If CheckPackage is set, NewPackage checks all package statements.
-	CheckPackage
+	// If FindPackageName is set,
+	FindPackageName
 
-	// TODO: Implement
-	// If IndexPackage is set, Package decls are indexed
-	IndexPackage
+	// If IndexPackage is set, Package files are indexed
+	FindPackageFiles
 )
+
+type FileMap map[string]*File
+
+func (m FileMap) Files() []*File {
+	fs := make([]*File, 0, len(m))
+	for _, f := range m {
+		fs = append(fs, f)
+	}
+	sort.Sort(ByFileName(fs))
+	return fs
+}
 
 type Package struct {
 	Dir        string // directory path
@@ -261,11 +187,53 @@ type Package struct {
 	Root       string // root of Go tree where this package lives
 	Goroot     bool   // package found in Go root
 
-	GoFiles        []string // .go source files (excluding TestGoFiles, XTestGoFiles)
-	IgnoredGoFiles []string // .go source files ignored for this build
-	TestGoFiles    []string // _test.go files in package
+	// GoFiles        map[string]*File // .go source files (excluding TestGoFiles, XTestGoFiles)
+	// IgnoredGoFiles map[string]*File // .go source files ignored for this build
+	// TestGoFiles    map[string]*File // _test.go files in package
+
+	GoFiles        FileMap // .go source files (excluding TestGoFiles, XTestGoFiles)
+	IgnoredGoFiles FileMap // .go source files ignored for this build
+	TestGoFiles    FileMap // _test.go files in package
+
+	Info os.FileInfo
 
 	mode ImportMode // ImportMode used when created
+}
+
+func (p *Package) FindPackageOnly() bool {
+	return p.mode&FindPackageOnly != 0
+}
+
+func (p *Package) FindPackageName() bool {
+	return p.mode&FindPackageName != 0
+}
+
+func (p *Package) FindPackageFiles() bool {
+	return p.mode&FindPackageFiles != 0
+}
+
+func (p *Package) LookupFile(name string) (*File, bool) {
+	if f, ok := p.GoFiles[name]; ok {
+		return f, ok
+	}
+	if f, ok := p.IgnoredGoFiles[name]; ok {
+		return f, ok
+	}
+	if f, ok := p.TestGoFiles[name]; ok {
+		return f, ok
+	}
+	return nil, false
+}
+
+func (p *Package) DeleteFile(name string) {
+	delete(p.GoFiles, name)
+	delete(p.IgnoredGoFiles, name)
+	delete(p.TestGoFiles, name)
+}
+
+func (p *Package) hasFiles() bool {
+	return len(p.GoFiles) != 0 && len(p.IgnoredGoFiles) != 0 &&
+		len(p.TestGoFiles) != 0
 }
 
 // IsCommand reports whether the package is considered a command to be installed
@@ -274,23 +242,21 @@ func (p *Package) IsCommand() bool {
 	return p.Name == "main"
 }
 
-func (c *Corpus) updatePackage(p *Package) {
-
-}
-
 func (c *Corpus) NewPackage(dir string, mode ImportMode) *Package {
-	p, _ := c.importPackage(dir, token.NewFileSet(), mode)
+	p, _ := c.importPackage(dir, nil, token.NewFileSet(), mode)
 	return p
 }
 
-func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode) (*Package, error) {
-	names, err := readdirnames(dir)
-	if err != nil {
-		return nil, err
-	}
-	p := Package{
-		Dir:  dir,
-		mode: mode,
+func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
+	mode ImportMode) (*Package, error) {
+
+	p := &Package{
+		Dir:            dir,
+		mode:           mode,
+		Info:           fi,
+		GoFiles:        make(FileMap),
+		IgnoredGoFiles: make(FileMap),
+		TestGoFiles:    make(FileMap),
 	}
 	// SrcDirs returns $GOPATH + "/src"
 	for _, srcDir := range c.srcDirs {
@@ -301,133 +267,182 @@ func (c *Corpus) importPackage(dir string, fset *token.FileSet, mode ImportMode)
 			break
 		}
 	}
-	for _, name := range FilterList(names, isGoFile) {
-		if err := p.addFile(c, fset, name); err != nil {
-			return &p, err
+	var pkgErr error
+	if p.mode > FindPackageOnly {
+		names, err := readdirnames(dir)
+		if err != nil {
+			return nil, err
 		}
+		for _, name := range names {
+			if err := c.addFile(p, name, fset); err != nil {
+				pkgErr = err
+			}
+		}
+		if p.Name == "" {
+			pkgErr = &NoGoError{Dir: dir}
+		}
+	}
+	return p, pkgErr
+}
+
+var ErrPackageNotExist = errors.New("pkg: package directory does not exists")
+
+func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
+	mode ImportMode) error {
+
+	if !fi.IsDir() {
+		return ErrPackageNotExist
 	}
 	var pkgErr error
-	if p.Name == "" {
-		pkgErr = &NoGoError{Dir: dir}
+	if mode > FindPackageOnly {
+		names, err := readdirnames(p.Dir)
+		if err != nil {
+			return err
+		}
+		seen := make(map[string]bool, len(names))
+		for _, name := range names {
+			if err := c.updateFile(p, name, fset); err != nil {
+				pkgErr = err
+			}
+		}
+		for name := range p.GoFiles {
+			if !seen[name] {
+				delete(p.GoFiles, name)
+			}
+		}
+		for name := range p.TestGoFiles {
+			if !seen[name] {
+				delete(p.TestGoFiles, name)
+			}
+		}
+		for name := range p.IgnoredGoFiles {
+			if !seen[name] {
+				delete(p.IgnoredGoFiles, name)
+			}
+		}
 	}
-	return &p, pkgErr
+	return pkgErr
 }
 
-func (p *Package) ignoreFile(c *Corpus, name string) bool {
-	if !isGoFile(name) {
-		return true
+func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error {
+	f, ok := p.LookupFile(name)
+	if !ok {
+		return c.addFile(p, name, fset)
 	}
-	if !c.matchFile(p.Dir, name) {
-		p.IgnoredGoFiles = append(p.IgnoredGoFiles, name)
-		return true
+	if c.IndexFileInfo {
+		fi, err := os.Stat(f.Path)
+		if err != nil {
+			p.DeleteFile(name)
+			return err
+		}
+		if sameFile(f.Info, fi) {
+			return nil
+		}
+		if fi.IsDir() {
+			p.DeleteFile(name)
+			return nil
+		}
+		f.Info = fi
 	}
 	if isGoTestFile(name) {
-		p.TestGoFiles = append(p.TestGoFiles, name)
-		return true
+		return nil
 	}
-	return false
+	index := false
+	if c.ctxt.MatchFile(p.Dir, name) {
+		if _, ok := p.IgnoredGoFiles[name]; ok {
+			delete(p.IgnoredGoFiles, name)
+			p.GoFiles[name] = f
+		}
+		index = true
+	} else {
+		if _, ok := p.GoFiles[name]; ok {
+			delete(p.GoFiles, name)
+			p.IgnoredGoFiles[name] = f
+		}
+	}
+	if index && p.mode > FindPackageOnly {
+		return c.indexFile(p, f, fset)
+	}
+	return nil
 }
 
-func (p *Package) visitFile(c *Corpus, fset *token.FileSet, name string) error {
+func (c *Corpus) addFile(p *Package, name string, fset *token.FileSet) error {
+	if !isGoFile(name) {
+		return nil
+	}
+	path := filepath.Join(p.Dir, name)
+	f, err := NewFile(path, c.IndexFileInfo)
+	if err != nil {
+		return err
+	}
+	index := false
 	switch {
-	case !isGoFile(name):
-		// Skip
-	case !c.matchFile(p.Dir, name):
-		p.IgnoredGoFiles = append(p.IgnoredGoFiles, name)
 	case isGoTestFile(name):
-		p.TestGoFiles = append(p.TestGoFiles, name)
+		p.TestGoFiles[name] = f
+	case c.ctxt.MatchFile(p.Dir, name):
+		p.GoFiles[name] = f
+		index = true
 	default:
-		// fi, err := os.Stat(name)
-
+		p.IgnoredGoFiles[name] = f
 	}
+	if index && p.mode > FindPackageOnly {
+		return c.indexFile(p, f, fset)
+	}
+	return nil
+}
+
+// TODO: Rename
+func (c *Corpus) indexFile(p *Package, f *File, fset *token.FileSet) error {
 	switch {
-	case p.mode&CheckPackage != 0:
-		n, ok := parseFileName(filepath.Join(p.Dir, name), fset)
+	case p.FindPackageFiles():
+		name, ok := c.parseFileName(f.Path, fset)
 		if !ok {
 			return nil
 		}
-		switch {
-		case p.Name == "":
-			p.Name = n
-		case p.Name != n:
+		switch p.Name {
+		case "":
+			p.Name = name
+		case name:
+			// Ok
+		default:
+			var firstFile *File
+			for _, f := range p.GoFiles {
+				firstFile = f
+				break
+			}
 			return &MultiplePackageError{
 				Dir:      p.Dir,
-				Packages: []string{p.Name, n},
-				Files:    []string{p.GoFiles[0], name},
+				Packages: []string{p.Name, name},
+				Files:    []string{firstFile.Name, f.Name},
 			}
 		}
-	case p.Name == "":
-		n, ok := parsePkgName(filepath.Join(p.Dir, name), fset)
-		if ok {
-			p.Name = n
+	case p.FindPackageName():
+		if p.Name == "" {
+			if name, ok := c.parseFileName(f.Path, fset); ok {
+				p.Name = name
+			}
 		}
 	}
 	return nil
 }
 
-func (p *Package) XX_addFile(c *Corpus, fset *token.FileSet, name string, fi os.FileInfo) error {
-	p.GoFiles = append(p.GoFiles, name)
-	switch {
-	case p.mode&CheckPackage != 0:
-		n, ok := parseFileName(filepath.Join(p.Dir, name), fset)
-		if !ok {
-			return nil
-		}
-		switch {
-		case p.Name == "":
-			p.Name = n
-		case p.Name != n:
-			return &MultiplePackageError{
-				Dir:      p.Dir,
-				Packages: []string{p.Name, n},
-				Files:    []string{p.GoFiles[0], name},
-			}
-		}
-	case p.Name == "":
-		n, ok := parsePkgName(filepath.Join(p.Dir, name), fset)
-		if ok {
-			p.Name = n
-		}
+func (c *Corpus) parseFileName(path string, fset *token.FileSet) (string, bool) {
+	src, err := c.readFile(path)
+	if err != nil {
+		return "", false
 	}
-	return nil
+	var name string
+	af, _ := parser.ParseFile(fset, path, src, parser.PackageClauseOnly)
+	if af != nil && af.Name != nil {
+		name = af.Name.Name
+	}
+	return name, name != ""
 }
 
-func (p *Package) addFile(c *Corpus, fset *token.FileSet, name string) error {
-	if !isGoFile(name) {
-		return nil
-	}
-	if !c.matchFile(p.Dir, name) {
-		p.IgnoredGoFiles = append(p.IgnoredGoFiles, name)
-		return nil
-	}
-	if isGoTestFile(name) {
-		p.TestGoFiles = append(p.TestGoFiles, name)
-		return nil
-	}
-	p.GoFiles = append(p.GoFiles, name)
-	switch {
-	case p.mode&CheckPackage != 0:
-		n, ok := parseFileName(filepath.Join(p.Dir, name), fset)
-		if !ok {
-			return nil
-		}
-		switch {
-		case p.Name == "":
-			p.Name = n
-		case p.Name != n:
-			return &MultiplePackageError{
-				Dir:      p.Dir,
-				Packages: []string{p.Name, n},
-				Files:    []string{p.GoFiles[0], name},
-			}
-		}
-	case p.Name == "":
-		n, ok := parsePkgName(filepath.Join(p.Dir, name), fset)
-		if ok {
-			p.Name = n
-		}
-	}
-	return nil
+func (c *Corpus) readFile(path string) ([]byte, error) {
+	c.fsOpenGate <- true
+	defer func() { <-c.fsOpenGate }()
+	return ioutil.ReadFile(path)
 }
 
 // NoGoError is the error used by Import to describe a directory
