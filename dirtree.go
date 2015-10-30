@@ -44,9 +44,18 @@ type Directory struct {
 	Depth    int
 }
 
+func (d *Directory) removeNotFound(found []string) {
+	sort.Strings(found)
+	for n := range d.Dirs {
+		if sort.SearchStrings(found, n) == len(found) {
+			delete(d.Dirs, n)
+		}
+	}
+}
+
 func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
 	fi, err := os.Stat(dir.Path)
-	if err != nil {
+	if err != nil || !fi.IsDir() {
 		return nil
 	}
 	var dirchs []chan *Directory
@@ -65,7 +74,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, nil)
 		}
 	} else {
-		list, fi, err := t.c.readdirnames(dir.Path)
+		list, err := t.c.readdirnames(dir.Path)
 		if err != nil {
 			return nil
 		}
@@ -94,11 +103,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 			dir.Pkg, err = t.c.importPackage(dir.Path, fi, fset, list)
 		}
 		// Remove missing Dirs
-		for n := range dir.Dirs {
-			if sort.SearchStrings(list, n) == len(list) {
-				delete(dir.Dirs, n)
-			}
-		}
+		dir.removeNotFound(list)
 		if len(dir.Dirs) == 0 && dir.Pkg == nil {
 			return nil
 		}
@@ -128,11 +133,22 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 			Name:  name,
 		}
 	}
-	list, fi, err := t.c.readdirnames(path)
+	fi, err := os.Stat(path)
 	if err != nil {
+		// println(path)
+		// panic(err)
+		return nil
+	}
+	if !fi.IsDir() {
+		return nil
+	}
+	list, err := t.c.readdirnames(path)
+	if err != nil {
+		// println(path)
+		// panic(err)
 		return nil // Change
 	}
-	if !internal && isInternal(name) {
+	if !internal && isInternal(path) {
 		internal = true
 	}
 	dir := &Directory{
@@ -141,6 +157,7 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 		Internal: internal,
 		Info:     fi,
 		Depth:    depth,
+		Dirs:     make(map[string]*Directory),
 	}
 	// TODO: handle errors
 	pkg, _ := t.c.importPackage(path, fi, fset, list)
@@ -160,14 +177,14 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 			}(d)
 		}
 	}
-	dirs := make(map[string]*Directory)
 	for _, ch := range dirchs {
 		if d := <-ch; d != nil {
-			dirs[d.Name] = d
+			dir.Dirs[d.Name] = d
 		}
 	}
-	if !dir.HasPkg && len(dirs) == 0 {
-		return nil
+	// if !dir.HasPkg && len(dir.Dirs) == 0 {
+	if len(dir.Dirs) == 0 {
+		// return nil
 	}
 	return dir
 }

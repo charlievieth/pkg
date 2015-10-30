@@ -20,7 +20,6 @@ type Corpus struct {
 	lastUpdate time.Time
 
 	dirs     map[string]*Directory
-	srcDirs  []string
 	MaxDepth int
 	mu       sync.RWMutex
 
@@ -34,23 +33,28 @@ type Corpus struct {
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
-func NewCorpus() *Corpus {
-	dirs := make(map[string]*Directory)
+func NewCorpus(mode ImportMode, indexFileInfo bool) *Corpus {
 	c := &Corpus{
-		ctxt:       NewContext(nil, 0),
-		dirs:       dirs,
-		mu:         sync.RWMutex{},
-		fsOpenGate: make(chan bool, maxOpenFiles),
+		ctxt:          NewContext(nil, 0),
+		dirs:          make(map[string]*Directory),
+		fsOpenGate:    make(chan bool, maxOpenFiles),
+		PackageMode:   mode,
+		IndexFileInfo: indexFileInfo,
 	}
 	fset := token.NewFileSet()
 	t := newTreeBuilder(c)
 	for _, path := range c.ctxt.SrcDirs() {
 		dir := t.newDirTree(fset, path, filepath.Base(path), 0, false)
 		if dir != nil {
-			dirs[path] = dir
+			c.dirs[path] = dir
 		}
 	}
 	return c
+}
+
+// WARN
+func (c *Corpus) Dirs() map[string]*Directory {
+	return c.dirs
 }
 
 // TODO: Toggle 'internal' behavior based on Go version.
@@ -88,10 +92,12 @@ func (c *Corpus) Lookup(path string) *Directory {
 func (c *Corpus) Update() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
+	if c.fsOpenGate == nil {
+		c.fsOpenGate = make(chan bool, maxOpenFiles)
+	}
 	t := newTreeBuilder(c)
 	seen := make(map[string]bool)
-	for _, path := range c.srcDirs {
+	for _, path := range c.ctxt.SrcDirs() {
 		seen[path] = true
 		fset := token.NewFileSet()
 		if _, ok := c.dirs[path]; ok {
@@ -107,13 +113,6 @@ func (c *Corpus) Update() {
 			delete(c.dirs, path)
 		}
 	}
-}
-
-func (c *Corpus) SrcDirs() (s []string) {
-	c.mu.RLock()
-	s = c.srcDirs
-	c.mu.RUnlock()
-	return
 }
 
 // WARN: Do we want to remove directories?
@@ -225,6 +224,18 @@ func (p *Package) LookupFile(name string) (*File, bool) {
 	return nil, false
 }
 
+func (p *Package) initMaps() {
+	if p.GoFiles == nil {
+		p.GoFiles = make(FileMap)
+	}
+	if p.IgnoredGoFiles == nil {
+		p.IgnoredGoFiles = make(FileMap)
+	}
+	if p.TestGoFiles == nil {
+		p.TestGoFiles = make(FileMap)
+	}
+}
+
 func (p *Package) DeleteFile(name string) {
 	delete(p.GoFiles, name)
 	delete(p.IgnoredGoFiles, name)
@@ -232,7 +243,7 @@ func (p *Package) DeleteFile(name string) {
 }
 
 func (p *Package) hasFiles() bool {
-	return len(p.GoFiles) != 0 && len(p.IgnoredGoFiles) != 0 &&
+	return len(p.GoFiles) != 0 || len(p.IgnoredGoFiles) != 0 ||
 		len(p.TestGoFiles) != 0
 }
 
@@ -252,15 +263,13 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	names []string) (*Package, error) {
 
 	p := &Package{
-		Dir:            dir,
-		mode:           c.PackageMode,
-		Info:           fi,
-		GoFiles:        make(FileMap),
-		IgnoredGoFiles: make(FileMap),
-		TestGoFiles:    make(FileMap),
+		Dir:  dir,
+		mode: c.PackageMode,
+		Info: fi,
 	}
-	// SrcDirs returns $GOPATH + "/src"
-	for _, srcDir := range c.srcDirs {
+	// Figure out if which Go path/root we're in.
+	// SrcDirs returns $GOPATH + "/src" - so trim.
+	for _, srcDir := range c.ctxt.SrcDirs() {
 		if sameRoot(dir, srcDir) {
 			p.ImportPath = trimPathPrefix(dir, srcDir)
 			p.Root = filepath.Dir(srcDir)
@@ -268,28 +277,37 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 			break
 		}
 	}
+	// Found the Package, nothing else to do.
+	if len(names) == 0 && p.FindPackageOnly() {
+		return p, nil
+	}
+	// If names are nil - complete them.
+	names, err := c.completeDirnames(dir, names)
+	if err != nil {
+		return nil, err
+	}
+	first := true
 	var pkgErr error
-	if len(names) != 0 || p.mode > FindPackageOnly {
-		var err error
-		if len(names) == 0 {
-			names, err = readdirnames(dir)
-			if err != nil {
-				return nil, err
-			}
+	for _, name := range names {
+		if !isGoFile(name) {
+			continue
 		}
-		for _, name := range names {
-			if err := c.addFile(p, name, fset); err != nil {
-				pkgErr = err
-			}
+		// Delay allocation until finding a Go file.
+		if first {
+			p.initMaps()
+			first = false
 		}
-		if p.Name == "" {
-			pkgErr = &NoGoError{Dir: dir}
+		if err := c.addFile(p, name, fset); err != nil {
+			pkgErr = err
 		}
 	}
-	if p.hasFiles() {
-		return p, pkgErr
+	if p.Name == "" {
+		pkgErr = &NoGoError{Dir: dir}
 	}
-	return nil, pkgErr
+	if !p.hasFiles() {
+		return nil, pkgErr
+	}
+	return p, pkgErr
 }
 
 var ErrPackageNotExist = errors.New("pkg: package directory does not exists")
@@ -301,36 +319,44 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 	if !fi.IsDir() {
 		return nil, ErrPackageNotExist
 	}
-	var pkgErr error
 	p.mode = c.PackageMode
-	if len(names) != 0 || p.mode > FindPackageOnly {
-		var err error
-		if len(names) == 0 {
-			names, err = readdirnames(p.Dir)
-			if err != nil {
-				return nil, err
-			}
+	if len(names) == 0 && p.FindPackageOnly() {
+		return p, nil
+	}
+	names, err := c.completeDirnames(p.Dir, names)
+	if err != nil {
+		return nil, err
+	}
+	var pkgErr error
+	seen := make(map[string]bool, len(names))
+	first := false
+	for _, name := range names {
+		if !isGoFile(name) {
+			continue
 		}
-		seen := make(map[string]bool, len(names))
-		for _, name := range names {
-			if err := c.updateFile(p, name, fset); err != nil {
-				pkgErr = err
-			}
+		if first {
+			// If the ImportMode changed, the maps may be nil.
+			p.initMaps()
+			first = false
 		}
-		for name := range p.GoFiles {
-			if !seen[name] {
-				delete(p.GoFiles, name)
-			}
+		seen[name] = true
+		if err := c.updateFile(p, name, fset); err != nil {
+			pkgErr = err
 		}
-		for name := range p.TestGoFiles {
-			if !seen[name] {
-				delete(p.TestGoFiles, name)
-			}
+	}
+	for name := range p.GoFiles {
+		if !seen[name] {
+			delete(p.GoFiles, name)
 		}
-		for name := range p.IgnoredGoFiles {
-			if !seen[name] {
-				delete(p.IgnoredGoFiles, name)
-			}
+	}
+	for name := range p.TestGoFiles {
+		if !seen[name] {
+			delete(p.TestGoFiles, name)
+		}
+	}
+	for name := range p.IgnoredGoFiles {
+		if !seen[name] {
+			delete(p.IgnoredGoFiles, name)
 		}
 	}
 	if p.hasFiles() {
@@ -375,7 +401,7 @@ func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error 
 			p.IgnoredGoFiles[name] = f
 		}
 	}
-	if index && p.mode > FindPackageOnly {
+	if index && p.FindPackageFiles() {
 		return c.indexFile(p, f, fset)
 	}
 	return nil
@@ -460,24 +486,28 @@ func (c *Corpus) readFile(path string) ([]byte, error) {
 	return ioutil.ReadFile(path)
 }
 
-func (c *Corpus) readdirnames(name string) ([]string, os.FileInfo, error) {
+// TODO: rename
+func (c *Corpus) completeDirnames(path string, names []string) ([]string, error) {
+	if names != nil {
+		return names, nil
+	}
+	return c.readdirnames(path)
+}
+
+func (c *Corpus) readdirnames(name string) ([]string, error) {
 	c.fsOpenGate <- true
 	defer func() { <-c.fsOpenGate }()
 	f, err := os.Open(name)
 	if err != nil {
-		return nil, nil, err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	names, err := f.Readdirnames(-1)
+	f.Close()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	sort.Strings(names)
-	return names, fi, nil
+	return names, nil
 }
 
 // NoGoError is the error used by Import to describe a directory
