@@ -243,16 +243,17 @@ func (p *Package) IsCommand() bool {
 }
 
 func (c *Corpus) NewPackage(dir string, mode ImportMode) *Package {
-	p, _ := c.importPackage(dir, nil, token.NewFileSet(), mode)
+	p, _ := c.importPackage(dir, nil, token.NewFileSet(), nil)
 	return p
 }
 
+// TODO: Organize args
 func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
-	mode ImportMode) (*Package, error) {
+	names []string) (*Package, error) {
 
 	p := &Package{
 		Dir:            dir,
-		mode:           mode,
+		mode:           c.PackageMode,
 		Info:           fi,
 		GoFiles:        make(FileMap),
 		IgnoredGoFiles: make(FileMap),
@@ -268,10 +269,13 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 		}
 	}
 	var pkgErr error
-	if p.mode > FindPackageOnly {
-		names, err := readdirnames(dir)
-		if err != nil {
-			return nil, err
+	if len(names) != 0 || p.mode > FindPackageOnly {
+		var err error
+		if len(names) == 0 {
+			names, err = readdirnames(dir)
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, name := range names {
 			if err := c.addFile(p, name, fset); err != nil {
@@ -282,22 +286,30 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 			pkgErr = &NoGoError{Dir: dir}
 		}
 	}
-	return p, pkgErr
+	if p.hasFiles() {
+		return p, pkgErr
+	}
+	return nil, pkgErr
 }
 
 var ErrPackageNotExist = errors.New("pkg: package directory does not exists")
 
+// TODO: Organize args
 func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
-	mode ImportMode) error {
+	names []string) (*Package, error) {
 
 	if !fi.IsDir() {
-		return ErrPackageNotExist
+		return nil, ErrPackageNotExist
 	}
 	var pkgErr error
-	if mode > FindPackageOnly {
-		names, err := readdirnames(p.Dir)
-		if err != nil {
-			return err
+	p.mode = c.PackageMode
+	if len(names) != 0 || p.mode > FindPackageOnly {
+		var err error
+		if len(names) == 0 {
+			names, err = readdirnames(p.Dir)
+			if err != nil {
+				return nil, err
+			}
 		}
 		seen := make(map[string]bool, len(names))
 		for _, name := range names {
@@ -321,7 +333,10 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 			}
 		}
 	}
-	return pkgErr
+	if p.hasFiles() {
+		return p, pkgErr
+	}
+	return nil, pkgErr
 }
 
 func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error {
@@ -443,6 +458,26 @@ func (c *Corpus) readFile(path string) ([]byte, error) {
 	c.fsOpenGate <- true
 	defer func() { <-c.fsOpenGate }()
 	return ioutil.ReadFile(path)
+}
+
+func (c *Corpus) readdirnames(name string) ([]string, os.FileInfo, error) {
+	c.fsOpenGate <- true
+	defer func() { <-c.fsOpenGate }()
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Strings(names)
+	return names, fi, nil
 }
 
 // NoGoError is the error used by Import to describe a directory

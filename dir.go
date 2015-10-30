@@ -92,6 +92,15 @@ func validName(s string) bool {
 	return len(s) > 0 && s[0] != '_' && s[0] != '.'
 }
 
+func containsGoFileName(names []string) bool {
+	for _, n := range names {
+		if isGoFile(n) {
+			return true
+		}
+	}
+	return false
+}
+
 func sameFile(fi1, fi2 os.FileInfo) bool {
 	if fi1 == nil {
 		if fi2 == nil {

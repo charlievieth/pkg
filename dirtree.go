@@ -32,6 +32,8 @@ func newTreeBuilder(c *Corpus) *treeBuilder {
 const testdataDirName = "testdata"
 
 type Directory struct {
+	Pkg *Package
+
 	Path     string // directory path
 	Name     string // directory name
 	PkgName  string // Go pkg name
@@ -48,17 +50,29 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 		return nil
 	}
 	var dirchs []chan *Directory
-	switch {
-	case !sameFile(fi, dir.Info):
-		dir.Info = fi
-		list, err := readdirmap(dir.Path)
+	if sameFile(fi, dir.Info) {
+		// Start updates before updating Package.
+		for _, d := range dir.Dirs {
+			ch := make(chan *Directory)
+			dirchs = append(dirchs, ch)
+			go func(d *Directory) {
+				ch <- t.updateDirTree(d, fset)
+			}(d)
+		}
+		// Update Package
+		if dir.Pkg != nil {
+			// TODO: Handle Package errore
+			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, nil)
+		}
+	} else {
+		list, fi, err := t.c.readdirnames(dir.Path)
 		if err != nil {
 			return nil
 		}
-		hasPkgFiles := false
-		for d := range list {
-			switch {
-			case isPkgDir(d):
+		dir.Info = fi
+		// Start update Goroutines
+		for _, d := range list {
+			if isPkgDir(d) {
 				if _, ok := dir.Dirs[d]; !ok {
 					ch := make(chan *Directory)
 					dirchs = append(dirchs, ch)
@@ -67,37 +81,31 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 							dir.Depth+1, dir.Internal)
 					}(d)
 				}
-			case isGoFile(d):
-				hasPkgFiles = true
-				if !dir.HasPkg && dir.PkgName == "" && t.c.matchFile(dir.Path, d) {
-					name, ok := parsePkgName(filepath.Join(dir.Path, d), fset)
-					if ok {
-						dir.HasPkg = true
-						dir.PkgName = name
-					}
-				}
 			}
 		}
+		// Update or create Package
+		switch {
+		case dir.Pkg != nil:
+			// TODO: Handle Package errors
+			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, list)
+
+		case containsGoFileName(list):
+			// Attempt to create a new package
+			dir.Pkg, err = t.c.importPackage(dir.Path, fi, fset, list)
+		}
+		// Remove missing Dirs
 		for n := range dir.Dirs {
-			if !list[n] {
+			if sort.SearchStrings(list, n) == len(list) {
 				delete(dir.Dirs, n)
 			}
 		}
-		if !hasPkgFiles && dir.HasPkg {
-			dir.HasPkg = false
-			dir.PkgName = ""
-		}
-		if len(dir.Dirs) == 0 && !dir.HasPkg {
+		if len(dir.Dirs) == 0 && dir.Pkg == nil {
 			return nil
 		}
-	default:
-		for _, d := range dir.Dirs {
-			ch := make(chan *Directory)
-			dirchs = append(dirchs, ch)
-			go func(d *Directory) {
-				ch <- t.updateDirTree(d, fset)
-			}(d)
-		}
+	}
+	if dir.Pkg != nil {
+		dir.PkgName = dir.Pkg.Name
+		dir.HasPkg = true
 	}
 	for _, ch := range dirchs {
 		if d := <-ch; d != nil {
@@ -120,39 +128,36 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 			Name:  name,
 		}
 	}
-	list, err := readdirnames(path)
+	list, fi, err := t.c.readdirnames(path)
 	if err != nil {
 		return nil // Change
-	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		return nil
 	}
 	if !internal && isInternal(name) {
 		internal = true
 	}
-	var (
-		hasPkgFiles bool
-		pkgName     string
-		dirchs      []chan *Directory
-	)
+	dir := &Directory{
+		Path:     path,
+		Name:     name,
+		Internal: internal,
+		Info:     fi,
+		Depth:    depth,
+	}
+	// TODO: handle errors
+	pkg, _ := t.c.importPackage(path, fi, fset, list)
+	if pkg != nil {
+		dir.Pkg = pkg
+		dir.PkgName = pkg.Name
+		dir.HasPkg = pkg.hasFiles()
+	}
+	var dirchs []chan *Directory
 	for _, d := range list {
-		switch {
-		case isPkgDir(d):
+		if isPkgDir(d) {
 			ch := make(chan *Directory)
 			dirchs = append(dirchs, ch)
 			go func(d string) {
 				ch <- t.newDirTree(fset, filepath.Join(path, d), d, depth+1,
 					internal)
 			}(d)
-		case isGoFile(d):
-			if pkgName == "" && t.c.matchFile(path, d) {
-				name, ok := parsePkgName(filepath.Join(path, d), fset)
-				if ok {
-					hasPkgFiles = true
-					pkgName = name
-				}
-			}
 		}
 	}
 	dirs := make(map[string]*Directory)
@@ -161,19 +166,10 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 			dirs[d.Name] = d
 		}
 	}
-	if !hasPkgFiles && len(dirs) == 0 {
+	if !dir.HasPkg && len(dirs) == 0 {
 		return nil
 	}
-	return &Directory{
-		Path:     path,
-		Name:     name,
-		PkgName:  pkgName,
-		HasPkg:   hasPkgFiles,
-		Internal: internal,
-		Info:     fi,
-		Dirs:     dirs,
-		Depth:    depth,
-	}
+	return dir
 }
 
 // TODO (CEV): Return if name is 'main', this will speed up scanning.
