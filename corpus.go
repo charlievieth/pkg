@@ -212,14 +212,20 @@ func (p *Package) FindPackageFiles() bool {
 }
 
 func (p *Package) LookupFile(name string) (*File, bool) {
-	if f, ok := p.GoFiles[name]; ok {
-		return f, ok
+	if p.GoFiles != nil {
+		if f, ok := p.GoFiles[name]; ok {
+			return f, ok
+		}
 	}
-	if f, ok := p.IgnoredGoFiles[name]; ok {
-		return f, ok
+	if p.IgnoredGoFiles != nil {
+		if f, ok := p.IgnoredGoFiles[name]; ok {
+			return f, ok
+		}
 	}
-	if f, ok := p.TestGoFiles[name]; ok {
-		return f, ok
+	if p.TestGoFiles != nil {
+		if f, ok := p.TestGoFiles[name]; ok {
+			return f, ok
+		}
 	}
 	return nil, false
 }
@@ -281,11 +287,6 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	if len(names) == 0 && p.FindPackageOnly() {
 		return p, nil
 	}
-	// If names are nil - complete them.
-	names, err := c.completeDirnames(dir, names)
-	if err != nil {
-		return nil, err
-	}
 	first := true
 	var pkgErr error
 	for _, name := range names {
@@ -322,10 +323,6 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 	p.mode = c.PackageMode
 	if len(names) == 0 && p.FindPackageOnly() {
 		return p, nil
-	}
-	names, err := c.completeDirnames(p.Dir, names)
-	if err != nil {
-		return nil, err
 	}
 	var pkgErr error
 	seen := make(map[string]bool, len(names))
@@ -393,8 +390,8 @@ func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error 
 		if _, ok := p.IgnoredGoFiles[name]; ok {
 			delete(p.IgnoredGoFiles, name)
 			p.GoFiles[name] = f
+			index = true
 		}
-		index = true
 	} else {
 		if _, ok := p.GoFiles[name]; ok {
 			delete(p.GoFiles, name)
@@ -484,14 +481,6 @@ func (c *Corpus) readFile(path string) ([]byte, error) {
 	c.fsOpenGate <- true
 	defer func() { <-c.fsOpenGate }()
 	return ioutil.ReadFile(path)
-}
-
-// TODO: rename
-func (c *Corpus) completeDirnames(path string, names []string) ([]string, error) {
-	if names != nil {
-		return names, nil
-	}
-	return c.readdirnames(path)
 }
 
 func (c *Corpus) readdirnames(name string) ([]string, error) {

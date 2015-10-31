@@ -60,6 +60,11 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 	}
 	var dirchs []chan *Directory
 	if sameFile(fi, dir.Info) {
+		// Update Package
+		if dir.Pkg != nil {
+			// TODO: Handle Package errore
+			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, nil)
+		}
 		// Start updates before updating Package.
 		for _, d := range dir.Dirs {
 			ch := make(chan *Directory)
@@ -68,17 +73,22 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 				ch <- t.updateDirTree(d, fset)
 			}(d)
 		}
-		// Update Package
-		if dir.Pkg != nil {
-			// TODO: Handle Package errore
-			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, nil)
-		}
 	} else {
 		list, err := t.c.readdirnames(dir.Path)
 		if err != nil {
 			return nil
 		}
 		dir.Info = fi
+		// Update or create Package
+		switch {
+		case dir.Pkg != nil:
+			// TODO: Handle Package errors
+			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, list)
+
+		case containsGoFileName(list):
+			// Attempt to create a new package
+			dir.Pkg, err = t.c.importPackage(dir.Path, fi, fset, list)
+		}
 		// Start update Goroutines
 		for _, d := range list {
 			if isPkgDir(d) {
@@ -91,16 +101,6 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 					}(d)
 				}
 			}
-		}
-		// Update or create Package
-		switch {
-		case dir.Pkg != nil:
-			// TODO: Handle Package errors
-			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, list)
-
-		case containsGoFileName(list):
-			// Attempt to create a new package
-			dir.Pkg, err = t.c.importPackage(dir.Path, fi, fset, list)
 		}
 		// Remove missing Dirs
 		dir.removeNotFound(list)
