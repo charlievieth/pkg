@@ -6,6 +6,8 @@ import (
 	"go/printer"
 	"go/token"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 type TypKind uint64
@@ -42,6 +44,25 @@ func (t TypKind) String() string {
 
 func (t TypKind) Name() string { return t.String() }
 
+func convertKind(k ast.ObjKind) TypKind {
+	// Warn: What type should interface be?
+	switch k {
+	case ast.Bad, ast.Pkg:
+		return Invalid
+	case ast.Con:
+		return Const
+	case ast.Typ:
+		return TypeName
+	case ast.Var:
+		return Var
+	case ast.Fun:
+		return Func
+	case ast.Lbl:
+		// IDK
+	}
+	return Invalid
+}
+
 type TypInfo uint64
 
 func makeTypInfo(kind TypKind, offset, line int) TypInfo {
@@ -66,6 +87,11 @@ type Ident struct {
 	Name string  // Type, func or method name
 	Recv string  // Receiver if method
 	Info TypInfo // Type and position info
+}
+
+func (i *Ident) IsExported() bool {
+	ch, _ := utf8.DecodeRuneInString(i.Name)
+	return unicode.IsUpper(ch)
 }
 
 func newIdent(id *ast.Ident, recv string, kind TypKind, fset *token.FileSet) *Ident {
@@ -101,29 +127,10 @@ func (i *Indexer) collectIdents(af *ast.File, fset *token.FileSet) []*Ident {
 				idents = append(idents, i)
 			}
 		case *ast.GenDecl:
-			// decls = genDecl(n, decls, fset)
+			idents = genDecl(n, idents, fset)
 		}
 	}
 	return idents
-}
-
-func convertKind(k ast.ObjKind) TypKind {
-	// Warn: What type should interface be?
-	switch k {
-	case ast.Bad, ast.Pkg:
-		return Invalid
-	case ast.Con:
-		return Const
-	case ast.Typ:
-		return TypeName
-	case ast.Var:
-		return Var
-	case ast.Fun:
-		return Func
-	case ast.Lbl:
-		// IDK
-	}
-	return Invalid
 }
 
 func genDecl(n *ast.GenDecl, idents []*Ident, fset *token.FileSet) []*Ident {
@@ -176,6 +183,7 @@ func funcDecl(fn *ast.FuncDecl, fset *token.FileSet) *Ident {
 }
 
 func receiverName(fn *ast.FuncDecl, fset *token.FileSet) (recv string) {
+	// WARN: Use method from 'define' pkg
 	b := getBuffer()
 	if printer.Fprint(b, fset, fn.Recv.List[0].Type) == nil {
 		recv = b.String()
@@ -188,8 +196,6 @@ func validDecl(id *ast.Ident) bool {
 	return id != nil && id.Pos().IsValid() && id.Name != "_"
 }
 
-var NoPosition token.Position
-
 // positionFor, returns the Position for Pos p without panicking.  If Pos is
 // invalid NoPosition is returned.
 func positionFor(p token.Pos, fset *token.FileSet) token.Position {
@@ -201,7 +207,7 @@ func positionFor(p token.Pos, fset *token.FileSet) token.Position {
 			}
 		}
 	}
-	return NoPosition
+	return token.Position{}
 }
 
 var bufferPool sync.Pool
