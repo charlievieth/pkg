@@ -3,17 +3,13 @@ package pkg
 import (
 	"errors"
 	"fmt"
-	"go/parser"
 	"go/token"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 )
-
-const maxOpenFiles = 200
 
 type Corpus struct {
 	ctxt       *Context
@@ -28,8 +24,6 @@ type Corpus struct {
 	// WARN: New
 	IndexEnabled bool
 	IndexGoCode  bool
-
-	fsOpenGate chan bool
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
@@ -37,7 +31,6 @@ func NewCorpus(mode ImportMode, indexFileInfo bool) *Corpus {
 	c := &Corpus{
 		ctxt:          NewContext(nil, 0),
 		dirs:          make(map[string]*Directory),
-		fsOpenGate:    make(chan bool, maxOpenFiles),
 		PackageMode:   mode,
 		IndexFileInfo: indexFileInfo,
 	}
@@ -92,9 +85,7 @@ func (c *Corpus) Lookup(path string) *Directory {
 func (c *Corpus) Update() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.fsOpenGate == nil {
-		c.fsOpenGate = make(chan bool, maxOpenFiles)
-	}
+
 	t := newTreeBuilder(c)
 	seen := make(map[string]bool)
 	for _, path := range c.ctxt.SrcDirs() {
@@ -249,8 +240,9 @@ func (p *Package) DeleteFile(name string) {
 }
 
 func (p *Package) hasFiles() bool {
-	return len(p.GoFiles) != 0 || len(p.IgnoredGoFiles) != 0 ||
-		len(p.TestGoFiles) != 0
+	return len(p.GoFiles) != 0 ||
+		len(p.TestGoFiles) != 0 ||
+		len(p.IgnoredGoFiles) != 0
 }
 
 // IsCommand reports whether the package is considered a command to be installed
@@ -269,9 +261,12 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	names []string) (*Package, error) {
 
 	p := &Package{
-		Dir:  dir,
-		mode: c.PackageMode,
-		Info: fi,
+		Dir:            dir,
+		mode:           c.PackageMode,
+		Info:           fi,
+		GoFiles:        make(FileMap),
+		IgnoredGoFiles: make(FileMap),
+		TestGoFiles:    make(FileMap),
 	}
 	// Figure out if which Go path/root we're in.
 	// SrcDirs returns $GOPATH + "/src" - so trim.
@@ -284,20 +279,11 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 		}
 	}
 	// Found the Package, nothing else to do.
-	if len(names) == 0 && p.FindPackageOnly() {
+	if p.FindPackageOnly() {
 		return p, nil
 	}
-	first := true
 	var pkgErr error
 	for _, name := range names {
-		if !isGoFile(name) {
-			continue
-		}
-		// Delay allocation until finding a Go file.
-		if first {
-			p.initMaps()
-			first = false
-		}
 		if err := c.addFile(p, name, fset); err != nil {
 			pkgErr = err
 		}
@@ -321,8 +307,14 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 		return nil, ErrPackageNotExist
 	}
 	p.mode = c.PackageMode
-	if len(names) == 0 && p.FindPackageOnly() {
+	// Unless we are indexing fileinfo return, reading
+	// in the dirnames on each update is very slow.
+	if len(names) == 0 && !c.IndexFileInfo {
 		return p, nil
+	}
+	names, err := completeDirnames(p.Dir, names)
+	if err != nil {
+		return nil, err
 	}
 	var pkgErr error
 	seen := make(map[string]bool, len(names))
@@ -341,6 +333,7 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 			pkgErr = err
 		}
 	}
+	// Remove missing files.
 	for name := range p.GoFiles {
 		if !seen[name] {
 			delete(p.GoFiles, name)
@@ -433,7 +426,7 @@ func (c *Corpus) addFile(p *Package, name string, fset *token.FileSet) error {
 func (c *Corpus) indexFile(p *Package, f *File, fset *token.FileSet) error {
 	switch {
 	case p.FindPackageFiles():
-		name, ok := c.parseFileName(f.Path, fset)
+		name, ok := parseFileName(f.Path, fset)
 		if !ok {
 			return nil
 		}
@@ -456,47 +449,12 @@ func (c *Corpus) indexFile(p *Package, f *File, fset *token.FileSet) error {
 		}
 	case p.FindPackageName():
 		if p.Name == "" {
-			if name, ok := c.parseFileName(f.Path, fset); ok {
+			if name, ok := parseFileName(f.Path, fset); ok {
 				p.Name = name
 			}
 		}
 	}
 	return nil
-}
-
-func (c *Corpus) parseFileName(path string, fset *token.FileSet) (string, bool) {
-	src, err := c.readFile(path)
-	if err != nil {
-		return "", false
-	}
-	var name string
-	af, _ := parser.ParseFile(fset, path, src, parser.PackageClauseOnly)
-	if af != nil && af.Name != nil {
-		name = af.Name.Name
-	}
-	return name, name != ""
-}
-
-func (c *Corpus) readFile(path string) ([]byte, error) {
-	c.fsOpenGate <- true
-	defer func() { <-c.fsOpenGate }()
-	return ioutil.ReadFile(path)
-}
-
-func (c *Corpus) readdirnames(name string) ([]string, error) {
-	c.fsOpenGate <- true
-	defer func() { <-c.fsOpenGate }()
-	f, err := os.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	names, err := f.Readdirnames(-1)
-	f.Close()
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(names)
-	return names, nil
 }
 
 // NoGoError is the error used by Import to describe a directory

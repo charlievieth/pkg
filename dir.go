@@ -1,6 +1,9 @@
 package pkg
 
 import (
+	"go/parser"
+	"go/token"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,8 +47,14 @@ func isWhitelisted(filename string) bool {
 	return whitelisted[key]
 }
 
-func readdirnames(name string) ([]string, error) {
-	f, err := os.Open(name)
+const maxOpenFiles = 200
+
+var fsOpenGate = make(chan struct{}, maxOpenFiles)
+
+func readdirnames(path string) ([]string, error) {
+	fsOpenGate <- struct{}{}
+	defer func() { <-fsOpenGate }()
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +67,17 @@ func readdirnames(name string) ([]string, error) {
 	return names, nil
 }
 
-func readdirmap(name string) (map[string]bool, error) {
-	s, err := readdirnames(name)
+// completeDirnames, reads the dirnames for path if names are nil.
+func completeDirnames(path string, names []string) ([]string, error) {
+	// TODO: rename
+	if names != nil {
+		return names, nil
+	}
+	return readdirnames(path)
+}
+
+func readdirmap(path string) (map[string]bool, error) {
+	s, err := readdirnames(path)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +86,24 @@ func readdirmap(name string) (map[string]bool, error) {
 		m[s[i]] = true
 	}
 	return m, nil
+}
+
+func readFile(path string) ([]byte, error) {
+	fsOpenGate <- struct{}{}
+	defer func() { <-fsOpenGate }()
+	return ioutil.ReadFile(path)
+}
+
+func parseFileName(path string, fset *token.FileSet) (name string, ok bool) {
+	src, err := readFile(path)
+	if err != nil {
+		return "", false
+	}
+	af, _ := parser.ParseFile(fset, path, src, parser.PackageClauseOnly)
+	if af != nil && af.Name != nil {
+		name = af.Name.Name
+	}
+	return name, name != ""
 }
 
 // isPkgDir, returns if name is a possible package directory.
@@ -92,9 +128,9 @@ func validName(s string) bool {
 	return len(s) > 0 && s[0] != '_' && s[0] != '.'
 }
 
-func containsGoFileName(names []string) bool {
+func hasGoFiles(names []string) bool {
 	for _, n := range names {
-		if isGoFile(n) {
+		if strings.HasSuffix(n, ".go") {
 			return true
 		}
 	}

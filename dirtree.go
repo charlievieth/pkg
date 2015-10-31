@@ -5,7 +5,6 @@ package pkg
 //  - Consider making pkg selection version aware
 
 import (
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -74,7 +73,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 			}(d)
 		}
 	} else {
-		list, err := t.c.readdirnames(dir.Path)
+		list, err := readdirnames(dir.Path)
 		if err != nil {
 			return nil
 		}
@@ -85,7 +84,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 			// TODO: Handle Package errors
 			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, list)
 
-		case containsGoFileName(list):
+		case hasGoFiles(list):
 			// Attempt to create a new package
 			dir.Pkg, err = t.c.importPackage(dir.Path, fi, fset, list)
 		}
@@ -133,19 +132,13 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 			Name:  name,
 		}
 	}
+	// TODO: handle errors
 	fi, err := os.Stat(path)
-	if err != nil {
-		// println(path)
-		// panic(err)
+	if err != nil || !fi.IsDir() {
 		return nil
 	}
-	if !fi.IsDir() {
-		return nil
-	}
-	list, err := t.c.readdirnames(path)
+	list, err := readdirnames(path)
 	if err != nil {
-		// println(path)
-		// panic(err)
 		return nil // Change
 	}
 	if !internal && isInternal(path) {
@@ -187,24 +180,6 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 		// return nil
 	}
 	return dir
-}
-
-// TODO (CEV): Return if name is 'main', this will speed up scanning.
-func parsePkgName(path string, fset *token.FileSet) (string, bool) {
-	name, ok := parseFileName(path, fset)
-	if ok && name != "main" {
-		return name, true
-	}
-	return "", false
-}
-
-// TODO (CEV): merge with parsePkgName
-func parseFileName(path string, fset *token.FileSet) (name string, ok bool) {
-	af, _ := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
-	if af != nil && af.Name != nil {
-		name = af.Name.Name
-	}
-	return name, name != ""
 }
 
 func isInternal(p string) bool {
