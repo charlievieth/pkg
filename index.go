@@ -6,32 +6,44 @@ import (
 	"go/printer"
 	"go/token"
 	"sync"
-	"unicode"
-	"unicode/utf8"
 )
+
+/*
+const (
+	PackageClause SpotKind = iota
+	ImportDecl
+	ConstDecl
+	TypeDecl
+	VarDecl
+	FuncDecl
+	MethodDecl
+	Use
+	nKinds
+)
+*/
 
 type TypKind uint64
 
 const (
-	Invalid TypKind = iota
-	Const
-	Var
-	TypeName
-	Func
-	Method
-	Interface
+	InvalidDecl TypKind = iota
+	ConstDecl
+	VarDecl
+	TypeDecl
+	FuncDecl
+	MethodDecl
+	InterfaceDecl
 
 	lastKind
 )
 
 var kindNames = [...]string{
-	"Invalid",
-	"Const",
-	"Var",
-	"TypeName",
-	"Func",
-	"Method",
-	"Interface",
+	"InvalidDecl",
+	"ConstDecl",
+	"VarDecl",
+	"TypeDecl",
+	"FuncDecl",
+	"MethodDecl",
+	"InterfaceDecl",
 }
 
 func (t TypKind) String() string {
@@ -48,19 +60,19 @@ func convertKind(k ast.ObjKind) TypKind {
 	// Warn: What type should interface be?
 	switch k {
 	case ast.Bad, ast.Pkg:
-		return Invalid
+		return InvalidDecl
 	case ast.Con:
-		return Const
+		return ConstDecl
 	case ast.Typ:
-		return TypeName
+		return TypeDecl
 	case ast.Var:
-		return Var
+		return VarDecl
 	case ast.Fun:
-		return Func
+		return FuncDecl
 	case ast.Lbl:
 		// IDK
 	}
-	return Invalid
+	return InvalidDecl
 }
 
 type TypInfo uint64
@@ -84,35 +96,140 @@ func (x TypInfo) Offset() int   { return int(x >> 32) }
 func (x TypInfo) IsIndex() bool { return x&1 != 0 }
 
 type Ident struct {
-	Name string  // Type, func or method name
-	Recv string  // Receiver if method
-	Info TypInfo // Type and position info
-}
-
-func (i *Ident) IsExported() bool {
-	ch, _ := utf8.DecodeRuneInString(i.Name)
-	return unicode.IsUpper(ch)
+	Name    string  // Type, func or method name
+	Package string  // Package name "http"
+	Path    string  // Package path "net/http"
+	Info    TypInfo // Type and position info
 }
 
 func newIdent(id *ast.Ident, recv string, kind TypKind, fset *token.FileSet) *Ident {
 	p := positionFor(id.Pos(), fset)
 	return &Ident{
 		Name: id.Name,
-		Recv: recv,
+		// Recv: recv,
 		Info: makeTypInfo(kind, p.Offset, p.Line),
 	}
 }
 
-type Indexer struct {
-	c    *Corpus
-	fset *token.FileSet
-	token.Position
-	packagePath   map[string]map[string]bool
-	packageIdents map[string]map[string]*Ident
-	idents        map[TypKind]map[string][]*Ident
+func (i *Ident) IsExported() bool {
+	return ast.IsExported(i.Name)
 }
 
-func (i *Indexer) collectIdents(af *ast.File, fset *token.FileSet) []*Ident {
+type Indexer struct {
+	c           *Corpus
+	fset        *token.FileSet
+	current     *Package
+	strings     map[string]string           // interned strings
+	packagePath map[string]map[string]bool  // "http" => "net/http" => true
+	exports     map[string]map[string]Ident // "net/http" => "Client.Do" => ident
+	currExports map[string]Ident
+	idents      map[TypKind]map[string][]Ident // Method => "Do" => []ident
+}
+
+func (x *Indexer) intern(s string) string {
+	if s, ok := x.strings[s]; ok {
+		return s
+	}
+	x.strings[s] = s
+	return s
+}
+
+func (x *Indexer) addIdent(tk TypKind, ident, recv *ast.Ident) {
+	// WARN: Add to 'exports' as well ???
+	// WARN: Only add exported idents ???
+
+	if x.currExports == nil {
+		x.currExports = make(map[string]Ident)
+	}
+	if x.idents[tk] == nil {
+		x.idents[tk] = make(map[string][]Ident)
+	}
+	pos := positionFor(ident.Pos(), x.fset)
+	name := x.intern(ident.Name)
+	id := Ident{
+		Name:    name,
+		Package: x.intern(x.current.Name),
+		Path:    x.intern(x.current.ImportPath),
+		Info:    makeTypInfo(tk, pos.Offset, pos.Line),
+	}
+	// Change the name of methods to be "<typename>.<methodname>".
+	// They will still be indexed as <methodname>.
+	if tk == MethodDecl && recv != nil {
+		id.Name = x.intern(id.Name + "." + recv.Name)
+	}
+
+	// Index as <methodname>
+	x.idents[tk][name] = append(x.idents[tk][name], id)
+
+	// Index as <typename>.<methodname>
+	x.currExports[id.Name] = id
+}
+
+func (x *Indexer) Visit(node ast.Node) {
+	switch n := node.(type) {
+	case *ast.Ident:
+	case *ast.ValueSpec:
+	case *ast.InterfaceType:
+		// x.addIdent(InterfaceDecl, n., nil)
+	case *ast.FuncDecl:
+		if n.Recv != nil {
+			x.visitRecv(n, n.Recv)
+		} else {
+			x.addIdent(FuncDecl, n.Name, nil)
+		}
+	default:
+		_ = n
+	}
+}
+
+func (x *Indexer) visitField(field *ast.Field) {
+
+}
+
+func (x *Indexer) visitInterface(ident *ast.Ident, fields *ast.FieldList) {
+	for _, field := range fields.List {
+		for _, id := range field.Names {
+			x.addIdent(InterfaceDecl, ident, id)
+		}
+	}
+}
+
+func (x *Indexer) visitFieldList(ident *ast.Ident, fields *ast.FieldList) {
+	for _, field := range fields.List {
+		switch n := field.Type.(type) {
+		case *ast.Ident:
+			x.addIdent(MethodDecl, ident, n)
+		case *ast.StarExpr:
+			if id, ok := n.X.(*ast.Ident); ok {
+				x.addIdent(MethodDecl, ident, id)
+			}
+		case *ast.FuncType:
+			for _, id := range field.Names {
+				x.addIdent(InterfaceDecl, ident, id)
+			}
+		}
+	}
+}
+
+func (x *Indexer) visitRecv(fn *ast.FuncDecl, fields *ast.FieldList) {
+	if len(fields.List) == 0 {
+		return
+	}
+	var recv *ast.Ident
+	switch n := fields.List[0].Type.(type) {
+	case *ast.StarExpr:
+		if id, ok := n.X.(*ast.Ident); ok {
+			recv = id
+		}
+	case *ast.Ident:
+		recv = n
+	default:
+		return
+	}
+	x.addIdent(MethodDecl, fn.Name, recv)
+}
+
+func (x *Indexer) collectIdents(af *ast.File, fset *token.FileSet) []*Ident {
 	if af.Decls == nil {
 		return nil
 	}
@@ -141,7 +258,7 @@ func genDecl(n *ast.GenDecl, idents []*Ident, fset *token.FileSet) []*Ident {
 		switch sp := spec.(type) {
 		case *ast.TypeSpec:
 			if validDecl(sp.Name) {
-				idents = append(idents, newIdent(sp.Name, "", TypeName, fset))
+				idents = append(idents, newIdent(sp.Name, "", TypeDecl, fset))
 			}
 		case *ast.ValueSpec:
 			idents = valueSpec(sp, idents, fset)
@@ -174,10 +291,10 @@ func funcDecl(fn *ast.FuncDecl, fset *token.FileSet) *Ident {
 	switch {
 	case fn.Recv != nil:
 		if len(fn.Recv.List) != 0 {
-			return newIdent(fn.Name, receiverName(fn, fset), Method, fset)
+			return newIdent(fn.Name, receiverName(fn, fset), MethodDecl, fset)
 		}
 	case fn.Name.Name == "init":
-		return newIdent(fn.Name, "", Func, fset)
+		return newIdent(fn.Name, "", FuncDecl, fset)
 	}
 	return nil
 }
