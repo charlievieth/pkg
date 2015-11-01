@@ -24,8 +24,10 @@ type Indexer struct {
 	strings     map[string]string              // interned strings
 	packagePath map[string]map[string]bool     // "http" => "net/http" => true
 	exports     map[string]map[string]Ident    // "net/http" => "Client.Do" => ident
-	currExports map[string]Ident               // current package
 	idents      map[TypKind]map[string][]Ident // Method => "Do" => []ident
+
+	// TODO: See if we are better off removing 'currExports'
+	currExports map[string]Ident // current package
 }
 
 func (x *Indexer) intern(s string) string {
@@ -166,7 +168,6 @@ func (x *Indexer) index() {
 }
 
 func (x *Indexer) indexDirectory(d *Directory) {
-	// WARN: Need to switch currExports !!!
 	if d.Pkg != nil {
 		x.indexPackage(d.Pkg)
 	}
@@ -194,6 +195,7 @@ func (x *Indexer) indexPackage(p *Package) {
 	if x.exports == nil {
 		x.exports = make(map[string]map[string]Ident)
 	}
+	// TODO: See if we are better off removing 'currExports'
 	m := make(map[string]Ident, len(x.currExports))
 	for k, v := range x.currExports {
 		m[k] = v
