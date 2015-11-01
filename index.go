@@ -158,3 +158,46 @@ func (x *Indexer) Visit(node ast.Node) ast.Visitor {
 	}
 	return nil
 }
+
+func (x *Indexer) index() {
+	for _, d := range x.c.dirs {
+		x.indexDirectory(d)
+	}
+}
+
+func (x *Indexer) indexDirectory(d *Directory) {
+	// WARN: Need to switch currExports !!!
+	if d.Pkg != nil {
+		x.indexPackage(d.Pkg)
+	}
+	for _, d := range d.Dirs {
+		x.indexDirectory(d)
+	}
+}
+
+func (x *Indexer) indexPackage(p *Package) {
+	files, err := parseFiles(x.fset, p.Dir, p.SrcFiles())
+	if err != nil || len(files) == 0 {
+		return
+	}
+	x.current = p
+	for _, af := range files {
+		x.visitFile(af)
+	}
+	if x.packagePath == nil {
+		x.packagePath = make(map[string]map[string]bool)
+	}
+	if x.packagePath[p.Name] == nil {
+		x.packagePath[p.Name] = make(map[string]bool)
+	}
+	x.packagePath[p.Name][p.ImportPath] = true
+	if x.exports == nil {
+		x.exports = make(map[string]map[string]Ident)
+	}
+	m := make(map[string]Ident, len(x.currExports))
+	for k, v := range x.currExports {
+		m[k] = v
+		delete(x.currExports, k)
+	}
+	x.exports[p.ImportPath] = m
+}

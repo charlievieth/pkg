@@ -76,6 +76,16 @@ func (f *File) Valid() bool {
 	return f.Name != "" && f.Path != ""
 }
 
+type Files []File
+
+func (f Files) Names() []string {
+	s := make([]string, len(f))
+	for i := 0; i < len(f); i++ {
+		s[i] = f[i].Name
+	}
+	return s
+}
+
 type ByFileName []File
 
 func (f ByFileName) Len() int           { return len(f) }
@@ -104,6 +114,8 @@ type Package struct {
 	// IgnoredGoFiles map[string]*File // .go source files ignored for this build
 	// TestGoFiles    map[string]*File // _test.go files in package
 
+	// TODO: Add FileType and use one map or an array.
+
 	GoFiles        FileMap // .go source files (excluding TestGoFiles, XTestGoFiles)
 	IgnoredGoFiles FileMap // .go source files ignored for this build
 	TestGoFiles    FileMap // _test.go files in package
@@ -112,12 +124,6 @@ type Package struct {
 
 	mode ImportMode // ImportMode used when created
 	err  error      // Either NoGoError of MultiplePackageError
-}
-
-// Error, returns
-// Either NoGoError of MultiplePackageError
-func (p *Package) Error() error {
-	return p.err
 }
 
 func (p *Package) FindPackageOnly() bool {
@@ -130,6 +136,16 @@ func (p *Package) FindPackageName() bool {
 
 func (p *Package) FindPackageFiles() bool {
 	return p.mode&FindPackageFiles != 0
+}
+
+// Mode, returns the ImportMode used to parse the package.
+func (p *Package) Mode() ImportMode {
+	return p.mode
+}
+
+// Error, returns either NoGoError or MultiplePackageError.
+func (p *Package) Error() error {
+	return p.err
 }
 
 func (p *Package) LookupFile(name string) (File, bool) {
@@ -151,6 +167,19 @@ func (p *Package) LookupFile(name string) (File, bool) {
 	return File{}, false
 }
 
+// IsCommand reports whether the package is considered a command to be installed
+// (not just a library). Packages named "main" are treated as commands.
+func (p *Package) IsCommand() bool {
+	return p.Name == "main"
+}
+
+func (p *Package) SrcFiles() []string {
+	if p.GoFiles != nil {
+		return Files(p.GoFiles.Files()).Names()
+	}
+	return nil
+}
+
 func (p *Package) initMaps() {
 	if p.GoFiles == nil {
 		p.GoFiles = make(FileMap)
@@ -163,7 +192,7 @@ func (p *Package) initMaps() {
 	}
 }
 
-func (p *Package) DeleteFile(name string) {
+func (p *Package) deleteFile(name string) {
 	delete(p.GoFiles, name)
 	delete(p.IgnoredGoFiles, name)
 	delete(p.TestGoFiles, name)
@@ -175,12 +204,6 @@ func (p *Package) isPkgDir() bool {
 		len(p.IgnoredGoFiles) != 0
 }
 
-// IsCommand reports whether the package is considered a command to be installed
-// (not just a library). Packages named "main" are treated as commands.
-func (p *Package) IsCommand() bool {
-	return p.Name == "main"
-}
-
 // findPkgName, attempts to find the pkg name.  If there are no buildable
 // Gofiles we don't parse any package names, this parses ignored and test
 // files until a name is found.
@@ -189,13 +212,13 @@ func (p *Package) findPkgName(fset *token.FileSet) {
 		return
 	}
 	for _, f := range p.IgnoredGoFiles {
-		if n, ok := parseFileName(f.Path, fset); ok {
+		if n, ok := parseFileName(fset, f.Path); ok {
 			p.Name = n
 			return
 		}
 	}
 	for _, f := range p.TestGoFiles {
-		if n, ok := parseFileName(f.Path, fset); ok {
+		if n, ok := parseFileName(fset, f.Path); ok {
 			p.Name = n
 			return
 		}
@@ -222,22 +245,14 @@ func (p *Package) trimFiles(seen []string) {
 	}
 }
 
-func (c *Corpus) NewPackage(dir string, mode ImportMode) *Package {
-	p, _ := c.importPackage(dir, nil, token.NewFileSet(), nil)
-	return p
-}
-
 // TODO: Organize args
 func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	names []string) (*Package, error) {
 
 	p := &Package{
-		Dir:            dir,
-		mode:           c.PackageMode,
-		Info:           fi,
-		GoFiles:        make(FileMap),
-		IgnoredGoFiles: make(FileMap),
-		TestGoFiles:    make(FileMap),
+		Dir:  dir,
+		mode: c.PackageMode,
+		Info: fi,
 	}
 	// Figure out if which Go path/root we're in.
 	// SrcDirs returns $GOPATH + "/src" - so trim.
@@ -253,6 +268,8 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	if p.FindPackageOnly() {
 		return p, nil
 	}
+	// Initializing FileMaps now that we are adding files.
+	p.initMaps()
 	var first error
 	for _, name := range names {
 		if err := c.addFile(p, name, fset); err != nil {
@@ -342,15 +359,16 @@ func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error 
 	}
 	if c.IndexFileInfo {
 		fi, err := os.Stat(f.Path)
-		if err != nil {
-			p.DeleteFile(name)
+
+		if err != nil || fi.IsDir() {
+			p.deleteFile(name)
 			return err
 		}
-		if sameFile(f.Info, fi) {
+		if fi.IsDir() {
+			p.deleteFile(name)
 			return nil
 		}
-		if fi.IsDir() {
-			p.DeleteFile(name)
+		if sameFile(f.Info, fi) {
 			return nil
 		}
 		f.Info = fi
@@ -412,7 +430,7 @@ func (c *Corpus) addFile(p *Package, name string, fset *token.FileSet) error {
 func (c *Corpus) indexFile(p *Package, f *File, fset *token.FileSet) error {
 	switch {
 	case p.FindPackageFiles():
-		name, ok := parseFileName(f.Path, fset)
+		name, ok := parseFileName(fset, f.Path)
 		if !ok {
 			return nil
 		}
@@ -435,7 +453,7 @@ func (c *Corpus) indexFile(p *Package, f *File, fset *token.FileSet) error {
 		}
 	case p.FindPackageName():
 		if p.Name == "" {
-			if name, ok := parseFileName(f.Path, fset); ok {
+			if name, ok := parseFileName(fset, f.Path); ok {
 				p.Name = name
 			}
 		}

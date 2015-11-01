@@ -1,8 +1,6 @@
 package pkg
 
 import (
-	"go/parser"
-	"go/token"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -92,18 +90,6 @@ func readFile(path string) ([]byte, error) {
 	fsOpenGate <- struct{}{}
 	defer func() { <-fsOpenGate }()
 	return ioutil.ReadFile(path)
-}
-
-func parseFileName(path string, fset *token.FileSet) (name string, ok bool) {
-	src, err := readFile(path)
-	if err != nil {
-		return "", false
-	}
-	af, _ := parser.ParseFile(fset, path, src, parser.PackageClauseOnly)
-	if af != nil && af.Name != nil {
-		name = af.Name.Name
-	}
-	return name, name != ""
 }
 
 // isPkgDir, returns if name is a possible package directory.

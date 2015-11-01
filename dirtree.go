@@ -17,10 +17,12 @@ type treeBuilder struct {
 	maxDepth int
 }
 
+const defaultMaxDepth = 512
+
 func newTreeBuilder(c *Corpus) *treeBuilder {
 	depth := c.MaxDepth
 	if depth <= 0 {
-		depth = 512
+		depth = defaultMaxDepth
 	}
 	return &treeBuilder{c: c, maxDepth: depth}
 }
@@ -41,6 +43,17 @@ type Directory struct {
 	Info     os.FileInfo
 	Dirs     map[string]*Directory
 	Depth    int
+}
+
+func (c *Corpus) newDirectory(root string, maxDepth int) (*Directory, error) {
+	fi, err := os.Stat(root)
+	if err != nil || !fi.IsDir() {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	t := &treeBuilder{c: c, maxDepth: maxDepth}
+	dir := t.newDirTree(fset, root, filepath.Base(root), 0, false)
+	return dir, nil
 }
 
 func (d *Directory) removeNotFound(found []string) {

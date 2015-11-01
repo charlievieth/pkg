@@ -32,21 +32,39 @@ func NewCorpus(mode ImportMode, indexFileInfo bool) *Corpus {
 		PackageMode:   mode,
 		IndexFileInfo: indexFileInfo,
 	}
-	fset := token.NewFileSet()
-	t := newTreeBuilder(c)
-	for _, path := range c.ctxt.SrcDirs() {
-		dir := t.newDirTree(fset, path, filepath.Base(path), 0, false)
+	return c
+}
+
+func (c *Corpus) Init() error {
+	if err := c.initDirTree(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Corpus) initDirTree() error {
+	dirs := c.ctxt.SrcDirs()
+	for _, root := range dirs {
+		dir, err := c.newDirectory(root, c.MaxDepth)
+		if err != nil {
+			return err
+		}
 		if dir != nil {
-			c.dirs[path] = dir
+			if c.dirs == nil {
+				c.dirs = make(map[string]*Directory)
+			}
+			c.dirs[root] = dir
 		}
 	}
-	return c
+	return nil
 }
 
 // WARN
 func (c *Corpus) Dirs() map[string]*Directory {
 	return c.dirs
 }
+
+// WARN: Remove LOCKS !!!
 
 // TODO: Toggle 'internal' behavior based on Go version.
 //
