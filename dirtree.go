@@ -157,7 +157,7 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	if pkg != nil {
 		dir.Pkg = pkg
 		dir.PkgName = pkg.Name
-		dir.HasPkg = pkg.hasFiles()
+		dir.HasPkg = pkg.isPkgDir()
 	}
 	var dirchs []chan *Directory
 	for _, d := range list {

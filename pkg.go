@@ -111,6 +111,13 @@ type Package struct {
 	Info os.FileInfo
 
 	mode ImportMode // ImportMode used when created
+	err  error      // Either NoGoError of MultiplePackageError
+}
+
+// Error, returns
+// Either NoGoError of MultiplePackageError
+func (p *Package) Error() error {
+	return p.err
 }
 
 func (p *Package) FindPackageOnly() bool {
@@ -162,7 +169,7 @@ func (p *Package) DeleteFile(name string) {
 	delete(p.TestGoFiles, name)
 }
 
-func (p *Package) hasFiles() bool {
+func (p *Package) isPkgDir() bool {
 	return len(p.GoFiles) != 0 ||
 		len(p.TestGoFiles) != 0 ||
 		len(p.IgnoredGoFiles) != 0
@@ -172,6 +179,47 @@ func (p *Package) hasFiles() bool {
 // (not just a library). Packages named "main" are treated as commands.
 func (p *Package) IsCommand() bool {
 	return p.Name == "main"
+}
+
+// findPkgName, attempts to find the pkg name.  If there are no buildable
+// Gofiles we don't parse any package names, this parses ignored and test
+// files until a name is found.
+func (p *Package) findPkgName(fset *token.FileSet) {
+	if !p.isPkgDir() {
+		return
+	}
+	for _, f := range p.IgnoredGoFiles {
+		if n, ok := parseFileName(f.Path, fset); ok {
+			p.Name = n
+			return
+		}
+	}
+	for _, f := range p.TestGoFiles {
+		if n, ok := parseFileName(f.Path, fset); ok {
+			p.Name = n
+			return
+		}
+	}
+}
+
+// trimFiles, removes any files not listed in seen.
+func (p *Package) trimFiles(seen []string) {
+	m := make(map[string]bool, len(seen))
+	for name := range p.GoFiles {
+		if !m[name] {
+			delete(p.GoFiles, name)
+		}
+	}
+	for name := range p.TestGoFiles {
+		if !m[name] {
+			delete(p.TestGoFiles, name)
+		}
+	}
+	for name := range p.IgnoredGoFiles {
+		if !m[name] {
+			delete(p.IgnoredGoFiles, name)
+		}
+	}
 }
 
 func (c *Corpus) NewPackage(dir string, mode ImportMode) *Package {
@@ -205,19 +253,27 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	if p.FindPackageOnly() {
 		return p, nil
 	}
-	var pkgErr error
+	var first error
 	for _, name := range names {
 		if err := c.addFile(p, name, fset); err != nil {
-			pkgErr = err
+			if e, ok := err.(*MultiplePackageError); ok {
+				p.err = e
+			}
+			if first != nil {
+				first = err
+			}
 		}
 	}
+	if !p.isPkgDir() {
+		return nil, first
+	}
 	if p.Name == "" {
-		pkgErr = &NoGoError{Dir: dir}
+		// Attempt to find the package name.
+		p.findPkgName(fset)
+		first = &NoGoError{Dir: dir}
+		p.err = first
 	}
-	if !p.hasFiles() {
-		return nil, pkgErr
-	}
-	return p, pkgErr
+	return p, first
 }
 
 var ErrPackageNotExist = errors.New("pkg: package directory does not exists")
@@ -239,43 +295,44 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 	if err != nil {
 		return nil, err
 	}
-	var pkgErr error
-	seen := make(map[string]bool, len(names))
-	first := false
+	var (
+		pkgErr error
+		first  bool
+	)
+	// Set pkg err to nil, if it's still relevant
+	// the update will re-set it.
+	p.err = nil
 	for _, name := range names {
 		if !isGoFile(name) {
 			continue
 		}
 		if first {
 			// If the ImportMode changed, the maps may be nil.
+			// This probably can't happen, but let's not panic.
 			p.initMaps()
 			first = false
 		}
-		seen[name] = true
 		if err := c.updateFile(p, name, fset); err != nil {
-			pkgErr = err
+			if e, ok := err.(*MultiplePackageError); ok {
+				p.err = e
+			}
+			if pkgErr != nil {
+				pkgErr = err
+			}
 		}
 	}
 	// Remove missing files.
-	for name := range p.GoFiles {
-		if !seen[name] {
-			delete(p.GoFiles, name)
-		}
+	p.trimFiles(names)
+	if !p.isPkgDir() {
+		return nil, pkgErr
 	}
-	for name := range p.TestGoFiles {
-		if !seen[name] {
-			delete(p.TestGoFiles, name)
-		}
+	if p.Name == "" {
+		// Attempt to find the package name.
+		p.findPkgName(fset)
+		pkgErr = &NoGoError{Dir: p.Dir}
+		p.err = pkgErr
 	}
-	for name := range p.IgnoredGoFiles {
-		if !seen[name] {
-			delete(p.IgnoredGoFiles, name)
-		}
-	}
-	if p.hasFiles() {
-		return p, pkgErr
-	}
-	return nil, pkgErr
+	return p, pkgErr
 }
 
 func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error {
@@ -298,22 +355,28 @@ func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error 
 		}
 		f.Info = fi
 	}
-	if isGoTestFile(name) {
-		return nil
-	}
 	index := false
-	if c.ctxt.MatchFile(p.Dir, name) {
+	switch {
+	case isGoTestFile(name):
+		// We don't check the build tags of test files,
+		// and since test files are determined by name
+		// we don't need to check the other file maps.
+		p.TestGoFiles[name] = f
+
+	case c.ctxt.MatchFile(p.Dir, name):
 		if _, ok := p.IgnoredGoFiles[name]; ok {
 			delete(p.IgnoredGoFiles, name)
-			p.GoFiles[name] = f
 			index = true
 		}
-	} else {
+		p.GoFiles[name] = f
+
+	default:
 		if _, ok := p.GoFiles[name]; ok {
 			delete(p.GoFiles, name)
-			p.IgnoredGoFiles[name] = f
 		}
+		p.IgnoredGoFiles[name] = f
 	}
+
 	if index && p.FindPackageFiles() {
 		return c.indexFile(p, &f, fset)
 	}
