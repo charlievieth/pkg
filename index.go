@@ -9,6 +9,7 @@ type Ident struct {
 	Name    string  // Type, func or method name
 	Package string  // Package name "http"
 	Path    string  // Package path "net/http"
+	File    string  // File where declared "$GOROOT/src/net/http/server.go"
 	Info    TypInfo // Type and position info
 }
 
@@ -28,6 +29,33 @@ type Indexer struct {
 
 	// TODO: See if we are better off removing 'currExports'
 	currExports map[string]Ident // current package
+}
+
+func newIndexer(c *Corpus) *Indexer {
+	return &Indexer{
+		c:           c,
+		fset:        token.NewFileSet(),
+		strings:     make(map[string]string),
+		packagePath: make(map[string]map[string]bool),
+		exports:     make(map[string]map[string]Ident),
+		idents:      make(map[TypKind]map[string][]Ident),
+		currExports: make(map[string]Ident),
+	}
+}
+
+// WARN: Dev only
+func (x *Indexer) PackagePath() map[string]map[string]bool {
+	return x.packagePath
+}
+
+// WARN: Dev only
+func (x *Indexer) Exports() map[string]map[string]Ident {
+	return x.exports
+}
+
+// WARN: Dev only
+func (x *Indexer) Idents() map[TypKind]map[string][]Ident {
+	return x.idents
 }
 
 func (x *Indexer) intern(s string) string {
@@ -74,12 +102,13 @@ func (x *Indexer) addIdent(tk TypKind, ident, recv *ast.Ident) {
 		Name:    name,
 		Package: x.intern(x.current.Name),
 		Path:    x.intern(x.current.ImportPath),
+		File:    x.intern(pos.Filename),
 		Info:    makeTypInfo(tk, pos.Offset, pos.Line),
 	}
 	// Change the name of methods to be "<typename>.<methodname>".
 	// They will still be indexed as <methodname>.
 	if tk == MethodDecl && recv != nil {
-		id.Name = x.intern(id.Name + "." + recv.Name)
+		id.Name = x.intern(recv.Name + "." + id.Name)
 	}
 
 	// Index as <methodname>
@@ -114,6 +143,7 @@ func (x *Indexer) visitGenDecl(decl *ast.GenDecl) {
 }
 
 func (x *Indexer) visitValueSpec(spec *ast.ValueSpec) {
+	// TODO (CEV): Add interface methods.
 	for _, n := range spec.Names {
 		if n.Obj == nil {
 			continue
@@ -132,7 +162,6 @@ func (x *Indexer) visitValueSpec(spec *ast.ValueSpec) {
 }
 
 func (x *Indexer) visitFile(af *ast.File) {
-	// TODO (CEV): Add interface methods.
 	for _, d := range af.Decls {
 		switch n := d.(type) {
 		case *ast.FuncDecl:
@@ -161,6 +190,7 @@ func (x *Indexer) Visit(node ast.Node) ast.Visitor {
 	return nil
 }
 
+// WARN: Remove if not used
 func (x *Indexer) index() {
 	for _, d := range x.c.dirs {
 		x.indexDirectory(d)

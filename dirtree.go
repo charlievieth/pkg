@@ -5,6 +5,7 @@ package pkg
 //  - Consider making pkg selection version aware
 
 import (
+	"errors"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ const defaultMaxDepth = 512
 func newTreeBuilder(c *Corpus) *treeBuilder {
 	depth := c.MaxDepth
 	if depth <= 0 {
-		depth = defaultMaxDepth
+		depth = 1e6
 	}
 	return &treeBuilder{c: c, maxDepth: depth}
 }
@@ -47,8 +48,11 @@ type Directory struct {
 
 func (c *Corpus) newDirectory(root string, maxDepth int) (*Directory, error) {
 	fi, err := os.Stat(root)
-	if err != nil || !fi.IsDir() {
+	if err != nil {
 		return nil, err
+	}
+	if !fi.IsDir() {
+		return nil, errors.New("pkg: invalid directory root: " + root)
 	}
 	fset := token.NewFileSet()
 	t := &treeBuilder{c: c, maxDepth: maxDepth}
@@ -56,10 +60,29 @@ func (c *Corpus) newDirectory(root string, maxDepth int) (*Directory, error) {
 	return dir, nil
 }
 
-func (d *Directory) removeNotFound(found []string) {
-	sort.Strings(found)
+func (c *Corpus) updateDirectory(dir *Directory, maxDepth int) (*Directory, error) {
+	if dir == nil {
+		return nil, errors.New("pkg: cannot update nil Directory")
+	}
+	fi, err := os.Stat(dir.Path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.IsDir() {
+		return nil, errors.New("pkg: invalid directory root: " + dir.Path)
+	}
+	fset := token.NewFileSet()
+	t := &treeBuilder{c: c, maxDepth: maxDepth}
+	return t.updateDirTree(dir, fset), nil
+}
+
+func (d *Directory) removeNotSeen(seen []string) {
+	m := make(map[string]bool, len(seen))
+	for _, s := range seen {
+		m[s] = true
+	}
 	for n := range d.Dirs {
-		if sort.SearchStrings(found, n) == len(found) {
+		if !m[n] {
 			delete(d.Dirs, n)
 		}
 	}
@@ -70,14 +93,19 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 	if err != nil || !fi.IsDir() {
 		return nil
 	}
+	// No change to the directory according to the file system.
+	// TODO (CEV): Test granularity of Linux and Windows.
+	noChange := sameFile(fi, dir.Info)
+	dir.Info = fi
 	var dirchs []chan *Directory
-	if sameFile(fi, dir.Info) {
+	if noChange {
 		// Update Package
 		if dir.Pkg != nil {
-			// TODO: Handle Package errore
+			// TODO: Handle Package errors
 			dir.Pkg, _ = t.c.updatePackage(dir.Pkg, fi, fset, nil)
 		}
-		// Start updates before updating Package.
+		// To reduce IO contention update package before
+		// updating sub-directories.
 		for _, d := range dir.Dirs {
 			ch := make(chan *Directory)
 			dirchs = append(dirchs, ch)
@@ -86,11 +114,11 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 			}(d)
 		}
 	} else {
+		dir.Info = fi
 		list, err := readdirnames(dir.Path)
 		if err != nil {
 			return nil
 		}
-		dir.Info = fi
 		// Update or create Package
 		switch {
 		case dir.Pkg != nil:
@@ -115,7 +143,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 			}
 		}
 		// Remove missing Dirs
-		dir.removeNotFound(list)
+		dir.removeNotSeen(list)
 		if len(dir.Dirs) == 0 && dir.Pkg == nil {
 			return nil
 		}
@@ -152,7 +180,7 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	}
 	list, err := readdirnames(path)
 	if err != nil {
-		return nil // Change
+		return nil
 	}
 	if !internal && isInternal(path) {
 		internal = true
@@ -165,7 +193,8 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 		Depth:    depth,
 		Dirs:     make(map[string]*Directory),
 	}
-	// TODO: handle errors
+	// To reduce IO contention update package before
+	// updating sub-directories.
 	pkg, _ := t.c.importPackage(path, fi, fset, list)
 	if pkg != nil {
 		dir.Pkg = pkg

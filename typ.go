@@ -1,6 +1,17 @@
 package pkg
 
-import "go/ast"
+import (
+	"encoding/json"
+
+	"fmt"
+)
+
+func init() {
+	// sanity check.
+	if lastKind > 8 {
+		panic("pkg: internal error lastKind > 8")
+	}
+}
 
 type TypKind uint64
 
@@ -13,10 +24,11 @@ const (
 	MethodDecl
 	InterfaceDecl
 
+	// The last TypKind *must* be less than or equal to 8.
 	lastKind
 )
 
-var kindNames = [...]string{
+var typKindStr = [...]string{
 	"InvalidDecl",
 	"ConstDecl",
 	"VarDecl",
@@ -26,33 +38,40 @@ var kindNames = [...]string{
 	"InterfaceDecl",
 }
 
+var typKindMap = map[string]TypKind{
+	"InvalidDecl":   InvalidDecl,
+	"ConstDecl":     ConstDecl,
+	"VarDecl":       VarDecl,
+	"TypeDecl":      TypeDecl,
+	"FuncDecl":      FuncDecl,
+	"MethodDecl":    MethodDecl,
+	"InterfaceDecl": InterfaceDecl,
+}
+
 func (t TypKind) String() string {
 	// Make sure lastKind is up to date.
 	if t < lastKind {
-		return kindNames[t]
+		return typKindStr[t]
 	}
-	return kindNames[0]
+	return typKindStr[InvalidDecl]
 }
 
 func (t TypKind) Name() string { return t.String() }
 
-func convertKind(k ast.ObjKind) TypKind {
-	// Warn: What type should interface be?
-	switch k {
-	case ast.Bad, ast.Pkg:
-		return InvalidDecl
-	case ast.Con:
-		return ConstDecl
-	case ast.Typ:
-		return TypeDecl
-	case ast.Var:
-		return VarDecl
-	case ast.Fun:
-		return FuncDecl
-	case ast.Lbl:
-		// IDK
+func (t TypKind) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *TypKind) UnmarshalJSON(b []byte) error {
+	i, j := 0, len(b)
+	if b[i] == '"' {
+		i++
 	}
-	return InvalidDecl
+	if b[j-1] == '"' {
+		j--
+	}
+	*t = typKindMap[string(b[i:j])]
+	return nil
 }
 
 type TypInfo uint64
@@ -73,3 +92,31 @@ func makeTypInfo(kind TypKind, offset, line int) TypInfo {
 func (x TypInfo) Kind() TypKind { return TypKind(x & 7) }
 func (x TypInfo) Line() int     { return int(x >> 4 & 0xfffffff) }
 func (x TypInfo) Offset() int   { return int(x >> 32) }
+
+func (t TypInfo) String() string {
+	return fmt.Sprintf("{Kind:%s Offset:%d Line:%d}", t.Kind().String(),
+		t.Offset(), t.Line())
+}
+
+func (t TypInfo) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind   TypKind
+		Line   int
+		Offset int
+	}{
+		t.Kind(),
+		t.Line(),
+		t.Offset(),
+	})
+}
+
+func (t *TypInfo) UnmarshalJSON(b []byte) error {
+	var v struct {
+		Kind   TypKind
+		Line   int
+		Offset int
+	}
+	err := json.Unmarshal(b, &v)
+	*t = makeTypInfo(v.Kind, v.Offset, v.Line)
+	return err
+}

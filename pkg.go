@@ -76,16 +76,6 @@ func (f *File) Valid() bool {
 	return f.Name != "" && f.Path != ""
 }
 
-type Files []File
-
-func (f Files) Names() []string {
-	s := make([]string, len(f))
-	for i := 0; i < len(f); i++ {
-		s[i] = f[i].Name
-	}
-	return s
-}
-
 type ByFileName []File
 
 func (f ByFileName) Len() int           { return len(f) }
@@ -103,27 +93,38 @@ func (m FileMap) Files() []File {
 	return fs
 }
 
+func (m FileMap) FileNames() []string {
+	s := make([]string, 0, len(m))
+	for _, f := range m {
+		s = append(s, f.Name)
+	}
+	sort.Strings(s)
+	return s
+}
+
+func (m FileMap) FilePaths() []string {
+	s := make([]string, 0, len(m))
+	for _, f := range m {
+		s = append(s, f.Path)
+	}
+	sort.Strings(s)
+	return s
+}
+
+// TODO (CEV): Map files by type (map[Type]FileMap)
+
 type Package struct {
-	Dir        string // directory path
-	Name       string // package name
-	ImportPath string // import path of package ("" if unknown)
-	Root       string // root of Go tree where this package lives
-	Goroot     bool   // package found in Go root
-
-	// GoFiles        map[string]*File // .go source files (excluding TestGoFiles, XTestGoFiles)
-	// IgnoredGoFiles map[string]*File // .go source files ignored for this build
-	// TestGoFiles    map[string]*File // _test.go files in package
-
-	// TODO: Add FileType and use one map or an array.
-
-	GoFiles        FileMap // .go source files (excluding TestGoFiles, XTestGoFiles)
-	IgnoredGoFiles FileMap // .go source files ignored for this build
-	TestGoFiles    FileMap // _test.go files in package
-
-	Info os.FileInfo
-
-	mode ImportMode // ImportMode used when created
-	err  error      // Either NoGoError of MultiplePackageError
+	Dir            string      // Directory path "$GOROOT/src/net/http"
+	Name           string      // Package name "http"
+	ImportPath     string      // Import path of package "net/http"
+	Root           string      // Root of Go tree where this package lives
+	Goroot         bool        // Package found in Go root
+	GoFiles        FileMap     // .go source files (excluding TestGoFiles and IgnoredGoFiles)
+	IgnoredGoFiles FileMap     // .go source files ignored for this build
+	TestGoFiles    FileMap     // _test.go files in package
+	Info           os.FileInfo // File info as of last update
+	mode           ImportMode  // ImportMode used when created
+	err            error       // Either NoGoError of MultiplePackageError
 }
 
 func (p *Package) FindPackageOnly() bool {
@@ -175,7 +176,7 @@ func (p *Package) IsCommand() bool {
 
 func (p *Package) SrcFiles() []string {
 	if p.GoFiles != nil {
-		return Files(p.GoFiles.Files()).Names()
+		return p.GoFiles.FileNames()
 	}
 	return nil
 }
