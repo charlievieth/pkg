@@ -217,10 +217,6 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 			dir.Dirs[d.Name] = d
 		}
 	}
-	// if !dir.HasPkg && len(dir.Dirs) == 0 {
-	if len(dir.Dirs) == 0 {
-		// return nil
-	}
 	return dir
 }
 
@@ -237,7 +233,7 @@ func splitPath(p string) []string {
 }
 
 func (dir *Directory) Lookup(path string) *Directory {
-	d := splitPath(dir.Path) // dir.Path assumed to be clearn
+	d := splitPath(dir.Path) // dir.Path assumed to be clean
 	p := splitPath(filepath.Clean(path))
 	i := 0
 	for i < len(d) {
@@ -310,7 +306,7 @@ func (dir *Directory) listPackages(list *[]*Package) {
 
 // matchInternal, returns is path can import 'internal' directory d.
 func (d *Directory) matchInternal(path string) bool {
-	return d.Internal && path != "" && sameRoot(path, internalRoot(d.Path))
+	return d.Internal && path != "" && hasRoot(path, internalRoot(d.Path))
 }
 
 func listDirs(dir *Directory, list *[]string, path string) {
@@ -333,9 +329,4 @@ func internalRoot(path string) string {
 		return root
 	}
 	return path
-}
-
-// sameRoot, returns if path is inside the directory tree rooted at root.
-func sameRoot(path, root string) bool {
-	return len(path) >= len(root) && path[0:len(root)] == root
 }

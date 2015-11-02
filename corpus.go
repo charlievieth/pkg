@@ -143,17 +143,27 @@ func (c *Corpus) ListPackages() []*Package {
 }
 
 func (c *Corpus) Lookup(path string) *Directory {
-	c.Update()
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	// WARN
+	// c.Update()
+	// c.mu.RLock()
+	// defer c.mu.RUnlock()
+
 	for p, dir := range c.dirs {
-		if filepath.HasPrefix(path, p) {
+		if hasPrefix(path, p) {
 			if d := dir.Lookup(path); d != nil {
 				return d
 			}
 		}
 	}
 	return nil
+}
+
+func (c *Corpus) LookupPackage(path string) (*Package, error) {
+	d := c.Lookup(path)
+	if d != nil {
+		return c.updatePackageFast(d.Pkg)
+	}
+	return nil, nil
 }
 
 // WARN: Dev only

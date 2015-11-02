@@ -226,6 +226,9 @@ func (p *Package) findPkgName(fset *token.FileSet) {
 // trimFiles, removes any files not listed in seen.
 func (p *Package) trimFiles(seen []string) {
 	m := make(map[string]bool, len(seen))
+	for _, s := range seen {
+		m[s] = true
+	}
 	for name := range p.GoFiles {
 		if !m[name] {
 			delete(p.GoFiles, name)
@@ -255,10 +258,10 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	// Figure out if which Go path/root we're in.
 	// SrcDirs returns $GOPATH + "/src" - so trim.
 	for _, srcDir := range c.ctxt.SrcDirs() {
-		if sameRoot(dir, srcDir) {
+		if hasRoot(dir, srcDir) {
 			p.ImportPath = trimPathPrefix(dir, srcDir)
 			p.Root = filepath.Dir(srcDir)
-			p.Goroot = sameRoot(dir, c.ctxt.GOROOT())
+			p.Goroot = hasRoot(dir, c.ctxt.GOROOT())
 			break
 		}
 	}
@@ -287,6 +290,16 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	return p, first
 }
 
+// WARN: Dev only
+func (c *Corpus) updatePackageFast(p *Package) (*Package, error) {
+	fi, err := os.Stat(p.Dir)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	return c.updatePackage(p, fi, fset, nil)
+}
+
 // TODO: Organize args
 func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 	names []string) (*Package, error) {
@@ -294,7 +307,10 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 	if !fi.IsDir() {
 		return nil, errors.New("pkg: invalid Package path")
 	}
+	// WARN: Implement selective updates
 	p.mode = c.PackageMode
+	p.Info = fi
+
 	// Unless we are indexing fileinfo return, reading
 	// in the dirnames on each update is very slow.
 	if len(names) == 0 && !c.IndexFileInfo {
@@ -333,7 +349,7 @@ func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 	// Remove missing files.
 	p.trimFiles(names)
 	if !p.isPkgDir() {
-		return nil, pkgErr
+		return p, pkgErr
 	}
 	if p.Name == "" {
 		// Attempt to find the package name.
@@ -351,14 +367,9 @@ func (c *Corpus) updateFile(p *Package, name string, fset *token.FileSet) error 
 	}
 	if c.IndexFileInfo {
 		fi, err := os.Stat(f.Path)
-
 		if err != nil || fi.IsDir() {
 			p.deleteFile(name)
 			return err
-		}
-		if fi.IsDir() {
-			p.deleteFile(name)
-			return nil
 		}
 		if sameFile(f.Info, fi) {
 			return nil
@@ -477,3 +488,94 @@ func (e *MultiplePackageError) Error() string {
 	return fmt.Sprintf("found packages %s (%s) and %s (%s) in %s", e.Packages[0],
 		e.Files[0], e.Packages[1], e.Files[1], e.Dir)
 }
+
+/* WARN: Removed if not used
+
+type PackageIndexer struct {
+	c        *Corpus
+	fset     *token.FileSet
+	mode     ImportMode
+	packages map[string]map[string]*Package // "$PATH/src" => "net/http" => Package
+	mu       sync.RWMutex
+}
+
+func (x *PackageIndexer) addFile(p *Package, name string) error {
+	if !isGoFile(name) {
+		return nil
+	}
+	path := filepath.Join(p.Dir, name)
+	f, err := NewFile(path, x.c.IndexFileInfo)
+	if err != nil {
+		return err
+	}
+	index := false
+	switch {
+	case isGoTestFile(name):
+		p.TestGoFiles[name] = f
+	case x.c.ctxt.MatchFile(p.Dir, name):
+		p.GoFiles[name] = f
+		index = true
+	default:
+		p.IgnoredGoFiles[name] = f
+	}
+	if index {
+		// return c.indexFile(p, &f, fset)
+	}
+	return nil
+}
+
+func (x *PackageIndexer) packageRoot(p *Package) {
+	// Figure out if which Go path/root we're in.
+	// SrcDirs returns $GOPATH + "/src" - so trim.
+	for _, srcDir := range x.c.ctxt.SrcDirs() {
+		if hasRoot(p.Dir, srcDir) {
+			p.ImportPath = trimPathPrefix(p.Dir, srcDir)
+			p.Root = filepath.Dir(srcDir)
+			p.Goroot = hasRoot(p.Dir, x.c.ctxt.GOROOT())
+			return
+		}
+	}
+}
+
+func (x *PackageIndexer) importPackage(dir string, names []string, fi os.FileInfo) error {
+	p := &Package{
+		Dir:  dir,
+		mode: x.mode,
+		Info: fi,
+	}
+	// Figure out if which Go path/root we're in.
+	// SrcDirs returns $GOPATH + "/src" - so trim.
+	for _, srcDir := range x.c.ctxt.SrcDirs() {
+		if hasRoot(dir, srcDir) {
+			p.ImportPath = trimPathPrefix(dir, srcDir)
+			p.Root = filepath.Dir(srcDir)
+			p.Goroot = hasRoot(dir, x.c.ctxt.GOROOT())
+			break
+		}
+	}
+	// Initializing FileMaps now that we are adding files.
+	p.initMaps()
+	var first error
+	for _, name := range names {
+		if err := x.addFile(p, name); err != nil {
+			if e, ok := err.(*MultiplePackageError); ok {
+				p.err = e
+			}
+			if first != nil {
+				first = err
+			}
+		}
+	}
+	if !p.isPkgDir() {
+		return first
+	}
+	if p.Name == "" {
+		// Attempt to find the package name.
+		p.findPkgName(x.fset)
+		first = &NoGoError{Dir: dir}
+		p.err = first
+	}
+
+	return first
+}
+*/
