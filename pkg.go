@@ -12,12 +12,8 @@ import (
 type ImportMode int
 
 const (
-	// If FindPackageOnly is set, NewPackage stops after reading only package
-	// statement.
-	FindPackageOnly ImportMode = 1 << iota
-
 	// If FindPackageName is set,
-	FindPackageName
+	FindPackageName ImportMode = 1 << iota
 
 	// If IndexPackage is set, Package files are indexed
 	FindPackageFiles
@@ -29,7 +25,6 @@ var importModeStr = []struct {
 	m ImportMode
 	s string
 }{
-	{FindPackageOnly, "+FindPackageOnly"},
 	{FindPackageName, "+FindPackageName"},
 	{FindPackageFiles, "+FindPackageFiles"},
 }
@@ -131,10 +126,6 @@ type Package struct {
 	Info           os.FileInfo // File info as of last update
 	mode           ImportMode  // ImportMode used when created
 	err            error       // Either NoGoError of MultiplePackageError
-}
-
-func (p *Package) FindPackageOnly() bool {
-	return p.mode&FindPackageOnly != 0
 }
 
 func (p *Package) FindPackageName() bool {
@@ -270,10 +261,6 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 			p.Goroot = sameRoot(dir, c.ctxt.GOROOT())
 			break
 		}
-	}
-	// Found the Package, nothing else to do.
-	if p.FindPackageOnly() {
-		return p, nil
 	}
 	// Initializing FileMaps now that we are adding files.
 	p.initMaps()
@@ -425,7 +412,7 @@ func (c *Corpus) addFile(p *Package, name string, fset *token.FileSet) error {
 	default:
 		p.IgnoredGoFiles[name] = f
 	}
-	if index && p.mode > FindPackageOnly {
+	if index {
 		return c.indexFile(p, &f, fset)
 	}
 	return nil
