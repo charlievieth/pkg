@@ -6,25 +6,28 @@ import (
 
 func BenchmarkCorpus_IndexFiles(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		NewCorpus(FindPackageFiles, true)
+		c := NewCorpus(FindPackageFiles, true)
+		if err := c.Init(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkCorpus_FindFiles(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		NewCorpus(FindPackageFiles, false)
+		c := NewCorpus(FindPackageFiles, false)
+		if err := c.Init(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkCorpus_FindName(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		NewCorpus(FindPackageName, false)
-	}
-}
-
-func BenchmarkCorpus_Fast(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		NewCorpus(FindPackageOnly, false)
+		c := NewCorpus(FindPackageName, false)
+		if err := c.Init(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -46,14 +49,6 @@ func BenchmarkCorpusUpdate_FindFiles(b *testing.B) {
 
 func BenchmarkCorpusUpdate_FindName(b *testing.B) {
 	c := NewCorpus(FindPackageName, false)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		c.Update()
-	}
-}
-
-func BenchmarkCorpusUpdate_Fast(b *testing.B) {
-	c := NewCorpus(FindPackageOnly, false)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		c.Update()
