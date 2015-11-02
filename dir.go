@@ -167,8 +167,28 @@ func FilterList(list []string, fn FilterFunc) []string {
 }
 
 func trimPathPrefix(s, prefix string) string {
-	if sameRoot(s, prefix) {
-		return strings.TrimPrefix(s[len(prefix):], string(filepath.Separator))
+	if hasRoot(s, prefix) {
+		return strings.TrimLeft(s[len(prefix):], string(filepath.Separator))
 	}
 	return s
+}
+
+// hasRoot, returns if path is inside the directory tree rooted at root.
+// Should be used for internal paths (i.e. paths we know to clean).
+func hasRoot(path, root string) bool {
+	return len(path) >= len(root) && path[0:len(root)] == root
+}
+
+// hasPrefix, returns if the path is inside the directory tree rooted at root.
+// Unlike hasRoot the path is not assumed to be clean.  The prefix must be
+// clean.  Use when matching external strings.
+func hasPrefix(path, prefix string) bool {
+	// TODO: Remove if unused.
+	if len(path) < len(prefix) {
+		return false
+	}
+	if path[0:len(prefix)] == prefix {
+		return true
+	}
+	return hasRoot(filepath.Clean(path), prefix)
 }
