@@ -253,6 +253,13 @@ func (dir *Directory) Lookup(path string) *Directory {
 	return dir
 }
 
+func (dir *Directory) LookupPackage(path string) *Package {
+	if d := dir.Lookup(path); d != nil {
+		return d.Pkg
+	}
+	return nil
+}
+
 // TODO (CEV): Not used anywhere, remove?
 func dirPath(p string) string {
 	if fi, err := os.Stat(p); err == nil {
@@ -273,14 +280,14 @@ func dirPath(p string) string {
 
 func (dir *Directory) ImportList(path string) []string {
 	list := make([]string, 0, 512)
-	dir.listPkgs(filepathDir(path), &list)
+	dir.listPkgPaths(filepathDir(path), &list)
 	sort.Strings(list)
 	return list
 }
 
-// listPkgs, appends the absolute paths of Go packages importable from path to
+// listPkgPaths, appends the absolute paths of Go packages importable from path to
 // list, if path == "" internal import restrictions are ignored.
-func (dir *Directory) listPkgs(path string, list *[]string) {
+func (dir *Directory) listPkgPaths(path string, list *[]string) {
 	if dir.Internal && !dir.matchInternal(path) {
 		return
 	}
@@ -288,7 +295,16 @@ func (dir *Directory) listPkgs(path string, list *[]string) {
 		*list = append(*list, dir.Path)
 	}
 	for _, d := range dir.Dirs {
-		d.listPkgs(path, list)
+		d.listPkgPaths(path, list)
+	}
+}
+
+func (dir *Directory) listPackages(list *[]*Package) {
+	if dir.Pkg != nil {
+		*list = append(*list, dir.Pkg)
+	}
+	for _, d := range dir.Dirs {
+		d.listPackages(list)
 	}
 }
 

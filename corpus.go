@@ -128,9 +128,17 @@ func (c *Corpus) ListImports(path string) []string {
 	}
 	list := make([]string, 0, 512)
 	for _, d := range c.dirs {
-		d.listPkgs(filepathDir(path), &list)
+		d.listPkgPaths(filepathDir(path), &list)
 	}
 	sort.Strings(list)
+	return list
+}
+
+func (c *Corpus) ListPackages() []*Package {
+	list := make([]*Package, 0, 64)
+	for _, d := range c.dirs {
+		d.listPackages(&list)
+	}
 	return list
 }
 

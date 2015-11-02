@@ -47,8 +47,6 @@ func (i ImportMode) String() string {
 	return "Invalid"
 }
 
-var NoFile File
-
 type File struct {
 	Name string      // file name
 	Path string      // absolute file path
@@ -68,12 +66,20 @@ func NewFile(path string, info bool) (File, error) {
 		if fi.IsDir() {
 			return File{}, errors.New("pkg: directory path: " + path)
 		}
+		f.Info = fi
 	}
 	return f, nil
 }
 
 func (f *File) Valid() bool {
 	return f.Name != "" && f.Path != ""
+}
+
+func (f File) String() string {
+	// Here to make debugging a little easier.
+	const s = "{Name:%s Path:%s Info:{Name:%s Size:%d Mode:%s ModTime:%s IsDir:%v}}"
+	return fmt.Sprintf(s, f.Name, f.Path, f.Info.Name(), f.Info.Size(),
+		f.Info.Mode(), f.Info.ModTime(), f.Info.IsDir())
 }
 
 type ByFileName []File
@@ -294,14 +300,12 @@ func (c *Corpus) importPackage(dir string, fi os.FileInfo, fset *token.FileSet,
 	return p, first
 }
 
-var ErrPackageNotExist = errors.New("pkg: package directory does not exists")
-
 // TODO: Organize args
 func (c *Corpus) updatePackage(p *Package, fi os.FileInfo, fset *token.FileSet,
 	names []string) (*Package, error) {
 
 	if !fi.IsDir() {
-		return nil, ErrPackageNotExist
+		return nil, errors.New("pkg: invalid Package path")
 	}
 	p.mode = c.PackageMode
 	// Unless we are indexing fileinfo return, reading
