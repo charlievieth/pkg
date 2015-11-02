@@ -3,10 +3,11 @@ package pkg
 import (
 	"go/ast"
 	"go/token"
+	"strings"
 )
 
 type Ident struct {
-	Name    string  // Type, func or method name
+	Name    string  // Type, func or type.method name
 	Package string  // Package name "http"
 	Path    string  // Package path "net/http"
 	File    string  // File where declared "$GOROOT/src/net/http/server.go"
@@ -15,6 +16,17 @@ type Ident struct {
 
 func (i *Ident) IsExported() bool {
 	return ast.IsExported(i.Name)
+}
+
+// name, returns the name of the ident.  If the ident is a method the typename
+// is stripped off, i.e. 'fmt.Print' => 'Print'.
+func (i *Ident) name() string {
+	if i.Info.Kind() == MethodDecl {
+		if n := strings.IndexByte(i.Name, '.'); n != -1 {
+			return i.Name[n+1:]
+		}
+	}
+	return i.Name
 }
 
 type Indexer struct {
@@ -198,7 +210,7 @@ func (x *Indexer) index() {
 }
 
 func (x *Indexer) indexDirectory(d *Directory) {
-	if d.Pkg != nil {
+	if d.Pkg != nil && !d.Pkg.IsCommand() {
 		x.indexPackage(d.Pkg)
 	}
 	for _, d := range d.Dirs {
