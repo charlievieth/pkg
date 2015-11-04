@@ -224,6 +224,7 @@ func (x *Indexer) indexPackage(p *Package) {
 		return
 	}
 	x.current = p
+	x.currExports = make(map[string]Ident)
 	for _, af := range files {
 		x.visitFile(af)
 	}
@@ -237,13 +238,7 @@ func (x *Indexer) indexPackage(p *Package) {
 	if x.exports == nil {
 		x.exports = make(map[string]map[string]Ident)
 	}
-	// TODO: See if we are better off removing 'currExports'
-	m := make(map[string]Ident, len(x.currExports))
-	for k, v := range x.currExports {
-		m[k] = v
-		delete(x.currExports, k)
-	}
-	x.exports[p.ImportPath] = m
+	x.exports[p.ImportPath] = x.currExports
 }
 
 func (x *Indexer) removePackage(p Pak) {

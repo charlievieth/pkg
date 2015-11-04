@@ -103,6 +103,7 @@ func (c *Corpus) Update() {
 		seen[path] = true
 		fset := token.NewFileSet()
 		if _, ok := c.dirs[path]; ok {
+			// WARN WARN WARN WARN REMOVE
 			if c.dirs[path] == nil {
 				panic(path)
 			}
@@ -170,12 +171,12 @@ func (c *Corpus) Lookup(path string) *Directory {
 	return nil
 }
 
-func (c *Corpus) LookupPackage(path string) (*Package, error) {
-	// WARN: This is dumb - fix.
-	if d := c.Lookup(path); d != nil {
-		return d.Pkg, nil
-	}
-	return nil, nil
+func (c *Corpus) LookupPackage(path string) *Package {
+	// if p := c.pkgIndex.lookupPath(filepath.Clean(path)); p != nil {
+	// 	fi, err := os.Stat(p.Dir)
+
+	// }
+	return c.pkgIndex.lookupPath(filepath.Clean(path))
 }
 
 // WARN: Dev only

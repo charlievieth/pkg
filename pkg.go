@@ -104,6 +104,7 @@ type Package struct {
 	Name           string      // Package name "http"
 	ImportPath     string      // Import path of package "net/http"
 	Root           string      // Root of Go tree where this package lives
+	SrcRoot        string      // package source root directory
 	Goroot         bool        // Package found in Go root
 	GoFiles        FileMap     // .go source files (excluding TestGoFiles and IgnoredGoFiles)
 	IgnoredGoFiles FileMap     // .go source files ignored for this build
@@ -137,13 +138,13 @@ func (p *Package) Error() error {
 
 func (p *Package) LookupFile(name string) (File, bool) {
 	if f, ok := p.GoFiles[name]; ok {
-		return f, ok
+		return f, true
 	}
 	if f, ok := p.IgnoredGoFiles[name]; ok {
-		return f, ok
+		return f, true
 	}
 	if f, ok := p.TestGoFiles[name]; ok {
-		return f, ok
+		return f, true
 	}
 	return File{}, false
 }
@@ -171,18 +172,6 @@ func (p *Package) fileNames() []string {
 	s = p.TestGoFiles.appendFileNames(s)
 	s = p.IgnoredGoFiles.appendFileNames(s)
 	return s
-}
-
-func (p *Package) initMaps() {
-	if p.GoFiles == nil {
-		p.GoFiles = make(FileMap)
-	}
-	if p.IgnoredGoFiles == nil {
-		p.IgnoredGoFiles = make(FileMap)
-	}
-	if p.TestGoFiles == nil {
-		p.TestGoFiles = make(FileMap)
-	}
 }
 
 func (p *Package) deleteFile(name string) {
@@ -220,6 +209,9 @@ func (p *Package) findPkgName(fset *token.FileSet) {
 
 // removeNotSeen, removes any files not listed in seen.
 func (p *Package) removeNotSeen(seen []string) {
+	if !p.isPkgDir() {
+		return
+	}
 	m := make(map[string]bool, len(seen))
 	for _, s := range seen {
 		m[s] = true

@@ -108,6 +108,7 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	exitErr := func() *Directory {
 		if dir.Pkg != nil {
 			t.c.pkgIndex.deletePackage(dir.Pkg)
+			dir.Pkg = nil
 		}
 		return nil
 	}
@@ -157,6 +158,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 	exitErr := func() *Directory {
 		if dir.Pkg != nil {
 			t.c.pkgIndex.deletePackage(dir.Pkg)
+			dir.Pkg = nil
 		}
 		return nil
 	}
@@ -165,31 +167,26 @@ func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Direct
 	if err != nil || !fi.IsDir() {
 		return exitErr()
 	}
-	// No change to the directory according to the file system.
-	// TODO (CEV): Test granularity of Linux and Windows.
-	noChange := sameFile(fi, dir.Info)
-	dir.Info = fi
-
+	dir.Info, fi = fi, dir.Info
 	var dirchs []chan *Directory
-	if noChange {
+
+	if sameFile(fi, dir.Info) {
+		// No change to the directory according to the file system.
+		// TODO (CEV): Test granularity of Linux and Windows.
 		if dir.Pkg != nil {
 			dir.Pkg = t.c.pkgIndex.visitDirectory(dir, nil)
 		}
-		// To reduce IO contention update sub-directories
-		// after updating the package.
 		for _, d := range dir.Dirs {
 			dirchs = append(dirchs, t.updateSubDirTree(d, fset))
 		}
 	} else {
-		// Directory changed - check all files.
+		// We only read in names if the directory changed,
+		// filesystem IO accounts for +95% of the update.
 		list, err := readdirnames(dir.Path)
 		if err != nil {
 			return exitErr()
 		}
-		// Update or create Package
-		if dir.Pkg != nil || hasGoFiles(list) {
-			dir.Pkg = t.c.pkgIndex.visitDirectory(dir, list)
-		}
+		dir.Pkg = t.c.pkgIndex.visitDirectory(dir, list)
 		// Start update Goroutines
 		for _, name := range list {
 			if isPkgDir(name) {
