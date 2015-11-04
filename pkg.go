@@ -125,8 +125,7 @@ func (m FileMap) appendFilePaths(s []string) []string {
 	return s
 }
 
-// TODO (CEV): Map files by type (map[Type]FileMap)
-
+// A Package describes a Go package or command.
 type Package struct {
 	Dir            string      // Directory path "$GOROOT/src/net/http"
 	Name           string      // Package name "http"
@@ -525,11 +524,16 @@ func (e *MultiplePackageError) Error() string {
 }
 
 type PackageIndexer struct {
-	c        *Corpus
-	fset     *token.FileSet
-	mode     ImportMode
-	packages map[string]map[string]*Package // "$GOPATH/src" => "net/http" => Package
-	mu       sync.RWMutex
+	c    *Corpus
+	fset *token.FileSet
+	mode ImportMode
+	mu   sync.RWMutex
+
+	// "$GOPATH/src" => "net/http" => Package
+	packages map[string]map[string]*Package
+
+	// stack of deleted packages, used to sync with Indexer
+	deleted []string
 }
 
 func newPackageIndexer(c *Corpus) *PackageIndexer {
@@ -573,6 +577,9 @@ func (x *PackageIndexer) deletePackage(p *Package) {
 	}
 	x.mu.Lock()
 	delete(x.packages[p.Root], p.ImportPath)
+	if x.c.IndexGoCode {
+		// x.deleted = append(x.deleted)
+	}
 	x.mu.Unlock()
 }
 
@@ -618,18 +625,8 @@ func (x *PackageIndexer) findPkgName(p *Package) {
 	}
 }
 
-// func (x *PackageIndexer) visitDirectory(dir *Directory, names []string) {
-// 	if p := x.lookupPath(dir.Path); p != nil {
-// 		if err := x.updatePackage(p, dir.Info, names); err != nil {
-// 			x.deletePackage(p)
-// 		}
-// 	}
-// 	if p, _ := x.importPackage(dir.Path, dir.Info, names); p != nil {
-// 		x.addPackage(p)
-// 		dir.Pkg = p
-// 	}
-// }
-
+// visitDirectory, updates or creates a Package for the Directory.  Used when
+// building or updating the dir-tree.
 func (x *PackageIndexer) visitDirectory(dir *Directory, names []string) *Package {
 	if dir == nil {
 		return nil

@@ -219,6 +219,9 @@ func (x *Indexer) indexDirectory(d *Directory) {
 }
 
 func (x *Indexer) indexPackage(p *Package) {
+	if p.IsCommand() {
+		return
+	}
 	files, err := parseFiles(x.fset, p.Dir, p.SrcFiles())
 	if err != nil || len(files) == 0 {
 		return
