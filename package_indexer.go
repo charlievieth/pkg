@@ -53,6 +53,9 @@ type PackageIndexer struct {
 
 	// stack of deleted packages, used to sync with Indexer
 	deleted []Pak
+
+	// stack of added packages, used to sync with Indexer
+	added []Pak
 }
 
 func newPackageIndexer(c *Corpus) *PackageIndexer {
@@ -96,7 +99,7 @@ func (x *PackageIndexer) deletePackage(p *Package) {
 	}
 	x.mu.Lock()
 	delete(x.packages[p.Root], p.ImportPath)
-	if x.c.IndexGoCode {
+	if x.c.IndexEnabled {
 		x.deleted = append(x.deleted, p.Pak())
 	}
 	x.mu.Unlock()

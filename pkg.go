@@ -154,6 +154,10 @@ func (p *Package) IsCommand() bool {
 	return p.Name == "main"
 }
 
+func (p *Package) IsValid() bool {
+	return p.Name != "" && p.isPkgDir()
+}
+
 func (p *Package) SrcFiles() []string {
 	return p.GoFiles.FileNames()
 }

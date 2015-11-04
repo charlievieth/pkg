@@ -1,9 +1,9 @@
 package pkg
 
 import (
-	"go/token"
-	"os"
-	"path/filepath"
+	// "go/token"
+	// "os"
+	// "path/filepath"
 	"testing"
 )
 
@@ -61,6 +61,7 @@ func BenchmarkCorpusUpdate_FindName(b *testing.B) {
 	}
 }
 
+/*
 func BenchmarkCorpusUpdate_Package(b *testing.B) {
 	c := NewCorpus(FindPackageFiles, true)
 	c.Init()
@@ -82,3 +83,4 @@ func BenchmarkCorpusUpdate_Package(b *testing.B) {
 		c.updatePackage(p, fi, fset, nil)
 	}
 }
+*/

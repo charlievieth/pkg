@@ -130,6 +130,50 @@ func (x *Indexer) addIdent(tk TypKind, ident, recv *ast.Ident) {
 	x.currExports[id.Name] = id
 }
 
+func (x *Indexer) removePackage(p Pak) {
+	if x.exports == nil {
+		return
+	}
+	exp := x.exports[p.ImportPath]
+	if exp == nil {
+		return
+	}
+	idents := make(map[TypKind]map[string]map[Ident]bool)
+	for _, id := range exp {
+		k := id.Info.Kind()
+		if idents[k] == nil {
+			idents[k] = make(map[string]map[Ident]bool)
+		}
+		name := id.name()
+		if idents[k][name] == nil {
+			idents[k][name] = make(map[Ident]bool)
+		}
+		idents[k][name][id] = true
+	}
+	filter := func(m map[Ident]bool, ids []Ident) []Ident {
+		n := 0
+		for i := 0; i < len(ids); i++ {
+			if !m[ids[i]] {
+				ids[n] = ids[i]
+				n++
+			}
+		}
+		return ids[:n]
+	}
+	for kind, names := range idents {
+		for name, ids := range names {
+			xids := filter(ids, x.idents[kind][name])
+			if len(xids) > 0 {
+				x.idents[kind][name] = xids
+			} else {
+				delete(x.idents[kind], name)
+			}
+		}
+	}
+	delete(x.packagePath[p.Name], p.ImportPath)
+	delete(x.exports, p.ImportPath)
+}
+
 func (x *Indexer) visitRecv(fn *ast.FuncDecl, fields *ast.FieldList) {
 	if len(fields.List) != 0 {
 		switch n := fields.List[0].Type.(type) {
@@ -202,14 +246,10 @@ func (x *Indexer) Visit(node ast.Node) ast.Visitor {
 	return nil
 }
 
-// WARN: Remove if not used
-func (x *Indexer) index() {
-	for _, d := range x.c.dirs {
-		x.indexDirectory(d)
-	}
-}
-
 func (x *Indexer) indexDirectory(d *Directory) {
+	if !x.c.IndexEnabled {
+		return
+	}
 	if d.Pkg != nil && !d.Pkg.IsCommand() {
 		x.indexPackage(d.Pkg)
 	}
@@ -219,7 +259,7 @@ func (x *Indexer) indexDirectory(d *Directory) {
 }
 
 func (x *Indexer) indexPackage(p *Package) {
-	if p.IsCommand() {
+	if p.IsCommand() || !p.IsValid() || !x.c.IndexEnabled {
 		return
 	}
 	files, err := parseFiles(x.fset, p.Dir, p.SrcFiles())

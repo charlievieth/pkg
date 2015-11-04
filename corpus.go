@@ -113,7 +113,6 @@ func (c *Corpus) Update() {
 	}
 
 	// WARN: Do we want to remove directories?
-
 	// Cleanup root directories
 	for path := range seen {
 		if !seen[path] {
