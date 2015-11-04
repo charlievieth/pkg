@@ -36,6 +36,8 @@ func NewCorpus(mode ImportMode, indexFileInfo bool) *Corpus {
 		MaxDepth:      512,
 		PackageMode:   mode,
 		IndexFileInfo: indexFileInfo,
+		IndexEnabled:  true,
+		IndexGoCode:   true,
 	}
 	return c
 }
