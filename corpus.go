@@ -170,9 +170,9 @@ func (c *Corpus) Lookup(path string) *Directory {
 }
 
 func (c *Corpus) LookupPackage(path string) (*Package, error) {
-	d := c.Lookup(path)
-	if d != nil {
-		return c.updatePackageFast(d.Pkg)
+	// WARN: This is dumb - fix.
+	if d := c.Lookup(path); d != nil {
+		return d.Pkg, nil
 	}
 	return nil, nil
 }
