@@ -9,6 +9,39 @@ import (
 	"sync"
 )
 
+type ImportMode int
+
+const (
+	// If FindPackageName is set,
+	FindPackageName ImportMode = 1 << iota
+
+	// If IndexPackage is set, Package files are indexed
+	FindPackageFiles
+)
+
+// CEV: This is pretty ugly but unlike a map allows ImportModes to be marshaled
+// in a set order.
+var importModeStr = []struct {
+	m ImportMode
+	s string
+}{
+	{FindPackageName, "+FindPackageName"},
+	{FindPackageFiles, "+FindPackageFiles"},
+}
+
+func (i ImportMode) String() string {
+	var b []byte
+	for _, m := range importModeStr {
+		if i&m.m != 0 {
+			b = append(b, m.s...)
+		}
+	}
+	if len(b) != 0 {
+		return string(b[1:])
+	}
+	return "Invalid"
+}
+
 type PackageIndexer struct {
 	c    *Corpus
 	fset *token.FileSet
