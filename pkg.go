@@ -532,7 +532,15 @@ type PackageIndexer struct {
 	mu       sync.RWMutex
 }
 
-func (x *PackageIndexer) lookupPath(path string) *Package {
+func newPackageIndexer(c *Corpus) *PackageIndexer {
+	return &PackageIndexer{
+		c:        c,
+		fset:     token.NewFileSet(),
+		packages: make(map[string]map[string]*Package),
+	}
+}
+
+func (x *PackageIndexer) lookupPath(path string) (p *Package) {
 	if x.packages == nil {
 		return nil
 	}
@@ -559,172 +567,13 @@ func (x *PackageIndexer) addPackage(p *Package) {
 	x.mu.Unlock()
 }
 
-func (x *PackageIndexer) removePackage(p *Package) {
-	if x.packages == nil || x.packages[p.Root] == nil {
+func (x *PackageIndexer) deletePackage(p *Package) {
+	if p == nil || x.packages == nil || x.packages[p.Root] == nil {
 		return
 	}
 	x.mu.Lock()
 	delete(x.packages[p.Root], p.ImportPath)
 	x.mu.Unlock()
-}
-
-func (x *PackageIndexer) visitDirectory(dir *Directory, names []string) *Package {
-	if p := x.lookupPath(dir.Path); p != nil {
-		if err := x.updatePackage(p, dir.Info, names); err != nil {
-			x.removePackage(p)
-			return nil
-		}
-		return p
-	}
-	if p, _ := x.importPackage(dir.Path, dir.Info, names); p != nil {
-		x.addPackage(p)
-		return p
-	}
-	return nil
-}
-
-func (x *PackageIndexer) importPackage(dir string, fi os.FileInfo, names []string) (*Package, error) {
-	if !hasGoFiles(names) {
-		return nil, &NoGoError{Dir: dir}
-	}
-	p := x.newPackage(dir, fi)
-	for _, name := range names {
-		if err := x.addFile(p, name); err != nil {
-			if e, ok := err.(*MultiplePackageError); ok {
-				p.err = e
-				return p, err
-			}
-		}
-	}
-	if !p.isPkgDir() {
-		return nil, &NoGoError{Dir: dir}
-	}
-	if p.Name == "" {
-		x.findPkgName(p)
-		p.err = &NoBuildableGoError{Dir: dir}
-	}
-	return p, nil
-}
-
-func (x *PackageIndexer) updatePackage(p *Package, fi os.FileInfo, names []string) error {
-
-	if !fi.IsDir() {
-		return errors.New("pkg: invalid Package path: " + p.Dir)
-	}
-
-	p.mode = x.mode
-	if !x.c.IndexFileInfo && p.Name != "" {
-		p.Info = fi
-		return nil
-	}
-
-	// If the directory did not change we can skip reading
-	// the directory names for speedup of 4x.
-	names, err := x.readdirnames(p, names, sameFile(p.Info, fi))
-	if err != nil {
-		return err
-	}
-	p.Info = fi
-
-	for _, name := range names {
-		if err := x.updateFile(p, name); err != nil {
-			if e, ok := err.(*MultiplePackageError); ok {
-				p.err = e
-				return nil
-			}
-		}
-	}
-	// Remove missing files.
-	p.removeNotSeen(names)
-	if !p.isPkgDir() {
-		return &NoGoError{Dir: p.Dir}
-	}
-	if p.Name == "" {
-		// Attempt to find the package name.
-		x.findPkgName(p)
-		if p.err == nil {
-			p.err = &NoBuildableGoError{Dir: p.Dir}
-		}
-	}
-	return nil
-}
-
-// readdirnames
-func (x *PackageIndexer) readdirnames(p *Package, names []string, usePkgFiles bool) ([]string, error) {
-	if names != nil {
-		return names, nil
-	}
-	if usePkgFiles && p != nil {
-		return p.fileNames(), nil
-	}
-	return readdirnames(p.Dir)
-}
-
-func (x *PackageIndexer) updateFile(p *Package, name string) error {
-	if !isGoFile(name) {
-		return nil
-	}
-	f, ok := p.LookupFile(name)
-	if !ok {
-		return x.addFile(p, name)
-	}
-	if x.c.IndexFileInfo {
-		fi, err := os.Stat(f.Path)
-		if err != nil || fi.IsDir() {
-			p.deleteFile(name)
-			return err
-		}
-		if sameFile(f.Info, fi) {
-			return nil
-		}
-		f.Info = fi
-	}
-	index := false
-	switch {
-	case isGoTestFile(name):
-		// We don't check the build tags of test files,
-		// and since test files are determined by name
-		// we don't need to check the other file maps.
-		p.TestGoFiles[name] = f
-
-	case x.c.ctxt.MatchFile(p.Dir, name):
-		if _, ok := p.IgnoredGoFiles[name]; ok {
-			delete(p.IgnoredGoFiles, name)
-			index = true
-		}
-		p.GoFiles[name] = f
-
-	default:
-		if _, ok := p.GoFiles[name]; ok {
-			delete(p.GoFiles, name)
-		}
-		p.IgnoredGoFiles[name] = f
-	}
-
-	if index && p.FindPackageFiles() {
-		return x.indexFile(p, &f)
-	}
-	return nil
-}
-
-// findPkgName, attempts to find and set the name of a Package with no
-// buildable Go files.
-func (x *PackageIndexer) findPkgName(p *Package) {
-	if !p.isPkgDir() || p.Name != "" {
-		return
-	}
-	for _, f := range p.IgnoredGoFiles {
-		if n, ok := parseFileName(x.fset, f.Path); ok {
-			p.Name = n
-			return
-		}
-	}
-	for _, f := range p.TestGoFiles {
-		if n, ok := parseFileName(x.fset, f.Path); ok {
-			p.Name = n
-			return
-		}
-	}
 }
 
 func (x *PackageIndexer) newPackage(dir string, fi os.FileInfo) *Package {
@@ -749,6 +598,165 @@ func (x *PackageIndexer) newPackage(dir string, fi os.FileInfo) *Package {
 	return p
 }
 
+// findPkgName, attempts to find and set the name of a Package with no
+// buildable Go files.
+func (x *PackageIndexer) findPkgName(p *Package) {
+	if !p.isPkgDir() || p.Name != "" {
+		return
+	}
+	for _, f := range p.IgnoredGoFiles {
+		if n, ok := parseFileName(x.fset, f.Path); ok {
+			p.Name = n
+			return
+		}
+	}
+	for _, f := range p.TestGoFiles {
+		if n, ok := parseFileName(x.fset, f.Path); ok {
+			p.Name = n
+			return
+		}
+	}
+}
+
+// func (x *PackageIndexer) visitDirectory(dir *Directory, names []string) {
+// 	if p := x.lookupPath(dir.Path); p != nil {
+// 		if err := x.updatePackage(p, dir.Info, names); err != nil {
+// 			x.deletePackage(p)
+// 		}
+// 	}
+// 	if p, _ := x.importPackage(dir.Path, dir.Info, names); p != nil {
+// 		x.addPackage(p)
+// 		dir.Pkg = p
+// 	}
+// }
+
+func (x *PackageIndexer) visitDirectory(dir *Directory, names []string) *Package {
+	if dir == nil {
+		return nil
+	}
+	if p := x.lookupPath(dir.Path); p != nil {
+		if err := x.updatePackage(p, dir.Info, names); err != nil {
+			x.deletePackage(p)
+			return nil
+		}
+		return p
+	}
+	if p, _ := x.importPackage(dir.Path, dir.Info, names); p != nil {
+		x.addPackage(p)
+		return p
+	}
+	return nil
+}
+
+// updatePackage, updates Package p, FileInfo fi is required, the directory
+// name slice is optional.  If an error is returned the Package should be
+// removed from the index.
+func (x *PackageIndexer) updatePackage(p *Package, fi os.FileInfo, names []string) error {
+	if !fi.IsDir() {
+		return errors.New("pkg: invalid Package path: " + p.Dir)
+	}
+	p.mode = x.mode
+	if !x.c.IndexFileInfo && p.Name != "" {
+		p.Info = fi
+		return nil
+	}
+	names, err := x.readdirnames(p, names, sameFile(p.Info, fi))
+	if err != nil {
+		return err
+	}
+	p.Info = fi
+	for _, name := range names {
+		if err := x.updateFile(p, name); err != nil {
+			if e, ok := err.(*MultiplePackageError); ok {
+				p.err = e
+				return nil
+			}
+		}
+	}
+	// Remove missing files.
+	p.removeNotSeen(names)
+	if !p.isPkgDir() {
+		return &NoGoError{Dir: p.Dir}
+	}
+	// Attempt to find the package name.
+	if p.Name == "" && p.err == nil {
+		x.findPkgName(p)
+		p.err = &NoBuildableGoError{Dir: p.Dir}
+	}
+	return nil
+}
+
+// readdirnames, returns the names from Package p's directory, and if used for
+// updates.  The purpose of this function is to reduce contention for IO.
+//
+// If names are not nil they are returned.  Otherwise if usePkgFiles is true
+// (no change to directory FileInfo) presumably no files have been added or
+// deleted so we can just return a slice of the Go files already stored in the
+// Package.  If names are nil and usePkgFiles is false we read the names from
+// Package.Dir (os.Readdirnames).
+func (x *PackageIndexer) readdirnames(p *Package, names []string, usePkgFiles bool) ([]string, error) {
+	if names != nil {
+		return names, nil
+	}
+	if usePkgFiles {
+		return p.fileNames(), nil
+	}
+	return readdirnames(p.Dir)
+}
+
+func (x *PackageIndexer) updateFile(p *Package, name string) error {
+	if !isGoFile(name) {
+		return nil
+	}
+	f, ok := p.LookupFile(name)
+	if !ok {
+		return x.addFile(p, name)
+	}
+
+	// Check file info, if it's the same return early.
+	if x.c.IndexFileInfo {
+		fi, err := os.Stat(f.Path)
+		if err != nil || fi.IsDir() {
+			p.deleteFile(name)
+			return err
+		}
+		same := sameFile(f.Info, fi)
+		f.Info = fi
+		if same {
+			return nil
+		}
+	}
+	return x.indexFile(p, f)
+}
+
+// importPackage, returns details about the Go package rooted at dir.
+func (x *PackageIndexer) importPackage(dir string, fi os.FileInfo, names []string) (*Package, error) {
+	// names, err := completeDirnames(dir, names)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	if !hasGoFiles(names) {
+		return nil, &NoGoError{Dir: dir}
+	}
+	p := x.newPackage(dir, fi)
+	for _, name := range names {
+		if err := x.addFile(p, name); err != nil {
+			if e, ok := err.(*MultiplePackageError); ok {
+				p.err = e
+				return p, err
+			}
+		}
+	}
+	if !p.isPkgDir() {
+		return nil, &NoGoError{Dir: dir}
+	}
+	if p.Name == "" {
+		x.findPkgName(p)
+		p.err = &NoBuildableGoError{Dir: dir}
+	}
+	return p, nil
+}
+
 func (x *PackageIndexer) addFile(p *Package, name string) error {
 	if !isGoFile(name) {
 		return nil
@@ -758,25 +766,34 @@ func (x *PackageIndexer) addFile(p *Package, name string) error {
 	if err != nil {
 		return err
 	}
-	index := false
-	switch {
-	case isGoTestFile(name):
-		p.TestGoFiles[name] = f
-	case x.c.ctxt.MatchFile(p.Dir, name):
-		p.GoFiles[name] = f
-		index = true
-	default:
-		p.IgnoredGoFiles[name] = f
-	}
-	if index {
-		return x.indexFile(p, &f)
-	}
-	return nil
+	return x.indexFile(p, f)
 }
 
-func (x *PackageIndexer) indexFile(p *Package, f *File) error {
+func (x *PackageIndexer) indexFile(p *Package, f File) error {
+	// Only parse files that match the current build.Context
+	index := false
 	switch {
+	case isGoTestFile(f.Name):
+		// We don't check the build tags of test files,
+		// and since test files are determined by f.Name
+		// we don't need to check the other file maps.
+		p.TestGoFiles[f.Name] = f
+
+	case x.c.ctxt.MatchFile(p.Dir, f.Name):
+		delete(p.IgnoredGoFiles, f.Name)
+		p.GoFiles[f.Name] = f
+		index = true
+
+	default:
+		delete(p.GoFiles, f.Name)
+		p.IgnoredGoFiles[f.Name] = f
+	}
+	switch {
+	case !index:
+		// Nothing to do...
+
 	case p.FindPackageFiles():
+		// Parse every file, checking for MultiplePackageError.
 		name, ok := parseFileName(x.fset, f.Path)
 		if !ok {
 			return nil
@@ -798,6 +815,7 @@ func (x *PackageIndexer) indexFile(p *Package, f *File) error {
 				Files:    []string{firstFile, f.Name},
 			}
 		}
+
 	case p.FindPackageName():
 		if p.Name == "" {
 			if name, ok := parseFileName(x.fset, f.Path); ok {

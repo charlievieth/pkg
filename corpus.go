@@ -24,7 +24,8 @@ type Corpus struct {
 	IndexEnabled bool
 	IndexGoCode  bool
 
-	index *Indexer
+	index    *Indexer
+	pkgIndex *PackageIndexer
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
@@ -40,6 +41,9 @@ func NewCorpus(mode ImportMode, indexFileInfo bool) *Corpus {
 }
 
 func (c *Corpus) Init() error {
+	if c.pkgIndex == nil {
+		c.pkgIndex = newPackageIndexer(c)
+	}
 	if err := c.initDirTree(); err != nil {
 		return err
 	}
@@ -68,11 +72,15 @@ func (c *Corpus) updateDirTree(root string) error {
 	}
 	var (
 		dir *Directory
+		ok  bool
 		err error
 	)
-	if dir = c.dirs[root]; dir != nil {
+	if dir, ok = c.dirs[root]; dir != nil {
 		dir, err = c.updateDirectory(dir, c.MaxDepth)
 	} else {
+		if ok {
+			delete(c.dirs, root)
+		}
 		dir, err = c.newDirectory(root, c.MaxDepth)
 	}
 	if dir != nil {
@@ -93,6 +101,9 @@ func (c *Corpus) Update() {
 		seen[path] = true
 		fset := token.NewFileSet()
 		if _, ok := c.dirs[path]; ok {
+			if c.dirs[path] == nil {
+				panic(path)
+			}
 			c.dirs[path] = t.updateDirTree(c.dirs[path], fset)
 		} else {
 			c.dirs[path] = t.newDirTree(fset, path, filepath.Base(path), 0, false)
