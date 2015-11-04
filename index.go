@@ -21,7 +21,8 @@ func (i *Ident) IsExported() bool {
 // name, returns the name of the ident.  If the ident is a method the typename
 // is stripped off, i.e. 'fmt.Print' => 'Print'.
 func (i *Ident) name() string {
-	if i.Info.Kind() == MethodDecl {
+	switch i.Info.Kind() {
+	case MethodDecl, InterfaceDecl:
 		if n := strings.IndexByte(i.Name, '.'); n != -1 {
 			return i.Name[n+1:]
 		}
@@ -128,50 +129,6 @@ func (x *Indexer) addIdent(tk TypKind, ident, recv *ast.Ident) {
 
 	// Index as <typename>.<methodname>
 	x.currExports[id.Name] = id
-}
-
-func (x *Indexer) removePackage(p Pak) {
-	if x.exports == nil {
-		return
-	}
-	exp := x.exports[p.ImportPath]
-	if exp == nil {
-		return
-	}
-	idents := make(map[TypKind]map[string]map[Ident]bool)
-	for _, id := range exp {
-		k := id.Info.Kind()
-		if idents[k] == nil {
-			idents[k] = make(map[string]map[Ident]bool)
-		}
-		name := id.name()
-		if idents[k][name] == nil {
-			idents[k][name] = make(map[Ident]bool)
-		}
-		idents[k][name][id] = true
-	}
-	filter := func(m map[Ident]bool, ids []Ident) []Ident {
-		n := 0
-		for i := 0; i < len(ids); i++ {
-			if !m[ids[i]] {
-				ids[n] = ids[i]
-				n++
-			}
-		}
-		return ids[:n]
-	}
-	for kind, names := range idents {
-		for name, ids := range names {
-			xids := filter(ids, x.idents[kind][name])
-			if len(xids) > 0 {
-				x.idents[kind][name] = xids
-			} else {
-				delete(x.idents[kind], name)
-			}
-		}
-	}
-	delete(x.packagePath[p.Name], p.ImportPath)
-	delete(x.exports, p.ImportPath)
 }
 
 func (x *Indexer) visitRecv(fn *ast.FuncDecl, fields *ast.FieldList) {
@@ -287,4 +244,48 @@ func (x *Indexer) indexPackage(p *Package) {
 		delete(x.currExports, k)
 	}
 	x.exports[p.ImportPath] = m
+}
+
+func (x *Indexer) removePackage(p Pak) {
+	if x.exports == nil {
+		return
+	}
+	exp := x.exports[p.ImportPath]
+	if exp == nil {
+		return
+	}
+	idents := make(map[TypKind]map[string]map[Ident]bool)
+	for _, id := range exp {
+		tk := id.Info.Kind()
+		if idents[tk] == nil {
+			idents[tk] = make(map[string]map[Ident]bool)
+		}
+		name := id.name()
+		if idents[tk][name] == nil {
+			idents[tk][name] = make(map[Ident]bool)
+		}
+		idents[tk][name][id] = true
+	}
+	filter := func(m map[Ident]bool, ids []Ident) []Ident {
+		n := 0
+		for i := 0; i < len(ids); i++ {
+			if !m[ids[i]] {
+				ids[n] = ids[i]
+				n++
+			}
+		}
+		return ids[:n]
+	}
+	for kind, names := range idents {
+		for name, ids := range names {
+			xids := filter(ids, x.idents[kind][name])
+			if len(xids) > 0 {
+				x.idents[kind][name] = xids
+			} else {
+				delete(x.idents[kind], name)
+			}
+		}
+	}
+	delete(x.packagePath[p.Name], p.ImportPath)
+	delete(x.exports, p.ImportPath)
 }

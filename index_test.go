@@ -4,15 +4,34 @@ import (
 	"testing"
 )
 
-/*
-type Ident struct {
-	Name    string  // Type, func or type.method name
-	Package string  // Package name "http"
-	Path    string  // Package path "net/http"
-	File    string  // File where declared "$GOROOT/src/net/http/server.go"
-	Info    TypInfo // Type and position info
+var identNameTests = []struct {
+	typ TypKind
+	in  string
+	out string
+}{
+	{FuncDecl, "A", "A"},
+	// Wrong, but should not be changed.
+	{FuncDecl, "A.A", "A.A"},
+
+	{MethodDecl, "A.A", "A"},
+	{InterfaceDecl, "A.A", "A"},
+
+	// These should not happen, but make sure
+	// we don't get an index panic.
+	{MethodDecl, "A", "A"},
+	{MethodDecl, "A.", ""},
+	{MethodDecl, ".A", "A"},
 }
-*/
+
+func TestIdentName(t *testing.T) {
+	for _, test := range identNameTests {
+		id := Ident{Name: test.in, Info: makeTypInfo(test.typ, 0, 0)}
+		name := id.name()
+		if name != test.out {
+			t.Errorf("Ident Name (%+v): (%s)", test, name)
+		}
+	}
+}
 
 func TestRemovePackage(t *testing.T) {
 	pakA := Pak{Name: "A", ImportPath: "A"}
