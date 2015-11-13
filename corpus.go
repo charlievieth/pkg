@@ -16,7 +16,6 @@ type Corpus struct {
 	MaxDepth int
 	mu       sync.RWMutex
 
-	IndexFileInfo bool
 	// WARN: New
 	IndexEnabled bool
 	IndexGoCode  bool
@@ -66,15 +65,14 @@ func (c *Corpus) notify(e Eventer) {
 func NewCorpus() *Corpus {
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	c := &Corpus{
-		ctxt:          NewContext(nil, 0),
-		dirs:          make(map[string]*Directory),
-		MaxDepth:      defaultMaxDepth,
-		IndexFileInfo: true,
-		IndexEnabled:  true,
-		IndexGoCode:   true,
-		LogEvents:     false,
-		log:           logger,
-		eventCh:       make(chan Eventer, 200),
+		ctxt:         NewContext(nil, 0),
+		dirs:         make(map[string]*Directory),
+		MaxDepth:     defaultMaxDepth,
+		IndexEnabled: true,
+		IndexGoCode:  true,
+		LogEvents:    false,
+		log:          logger,
+		eventCh:      make(chan Eventer, 200),
 	}
 	return c
 }
