@@ -272,7 +272,7 @@ func (x *Index) addAST(ax *astIndexer) {
 // indexPackage, indexes Package p.  If the Package is already indexed, any
 // changes will be merged in.
 func (x *Index) indexPackage(p *Package) {
-	if !x.c.IndexEnabled || p.IsCommand() || !p.IsValid() {
+	if !x.c.IndexGoCode || p.IsCommand() || !p.IsValid() {
 		return
 	}
 	ax := &astIndexer{
@@ -307,7 +307,7 @@ func (x *Index) indexPackage(p *Package) {
 
 // WARN: NEW
 func (x *Index) indexPackageFiles(p *Package, fset *token.FileSet, files map[string]*ast.File) {
-	if !x.c.IndexEnabled || p.IsCommand() || !p.IsValid() {
+	if !x.c.IndexGoCode || p.IsCommand() || !p.IsValid() {
 		return
 	}
 	if len(files) == 0 {

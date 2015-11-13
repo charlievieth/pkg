@@ -8,24 +8,34 @@ import (
 )
 
 type Corpus struct {
-	ctxt       *Context
-	lastUpdate time.Time
+	ctxt          *Context
+	MaxDepth      int
+	LogEvents     bool
+	IndexGoCode   bool
+	IndexThrottle float64
+	IndexInterval time.Duration
+	log           *log.Logger
+	idents        *Index
+	packages      *PackageIndex
+	dirs          map[string]*Directory
+	eventCh       chan Eventer
+	mu            sync.RWMutex
+	lastUpdate    time.Time
+}
 
-	dirs map[string]*Directory
-
-	MaxDepth int
-	mu       sync.RWMutex
-
-	// WARN: New
-	IndexEnabled bool
-	IndexGoCode  bool
-	LogEvents    bool
-	log          *log.Logger
-
-	eventCh chan Eventer
-
-	idents   *Index
-	packages *PackageIndex
+// TODO: Do we care about missing GOROOT and GOPATH env vars?
+func NewCorpus() *Corpus {
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+	c := &Corpus{
+		ctxt:        NewContext(nil, 0),
+		dirs:        make(map[string]*Directory),
+		MaxDepth:    defaultMaxDepth,
+		IndexGoCode: true,
+		LogEvents:   false,
+		log:         logger,
+		eventCh:     make(chan Eventer, 200),
+	}
+	return c
 }
 
 func (c *Corpus) EventStream() {
@@ -59,22 +69,6 @@ func (c *Corpus) notify(e Eventer) {
 			c.log.Println("Corpus: sending event timed out")
 		}
 	}
-}
-
-// TODO: Do we care about missing GOROOT and GOPATH env vars?
-func NewCorpus() *Corpus {
-	logger := log.New(os.Stdout, "", log.LstdFlags)
-	c := &Corpus{
-		ctxt:         NewContext(nil, 0),
-		dirs:         make(map[string]*Directory),
-		MaxDepth:     defaultMaxDepth,
-		IndexEnabled: true,
-		IndexGoCode:  true,
-		LogEvents:    false,
-		log:          logger,
-		eventCh:      make(chan Eventer, 200),
-	}
-	return c
 }
 
 func (c *Corpus) Init() error {
