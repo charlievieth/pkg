@@ -33,6 +33,96 @@ func TestIdentName(t *testing.T) {
 	}
 }
 
+func TestMergeIdents(t *testing.T) {
+	exports := map[string]map[string]Ident{
+		"A": map[string]Ident{
+			"A1":   Ident{Name: "A1", Package: "A", Info: makeTypInfo(ConstDecl, 1, 1)},
+			"A2":   Ident{Name: "A2", Package: "A", Info: makeTypInfo(VarDecl, 2, 2)},
+			"A3":   Ident{Name: "A3", Package: "A", Info: makeTypInfo(FuncDecl, 3, 3)},
+			"A4.M": Ident{Name: "A4.M", Package: "A", Info: makeTypInfo(MethodDecl, 4, 4)},
+		},
+	}
+	expA := make(map[string]Ident)
+	for name, id := range exports["A"] {
+		expA[name] = id
+	}
+	added := map[Ident]bool{
+		Ident{Name: "A5.M", Package: "A", Info: makeTypInfo(MethodDecl, 4, 4)}: true,
+		Ident{Name: "A6", Package: "A", Info: makeTypInfo(FuncDecl, 6, 6)}:     true,
+	}
+	removed := map[Ident]bool{
+		Ident{Name: "A3", Package: "A", Info: makeTypInfo(FuncDecl, 3, 3)}:     true,
+		Ident{Name: "A4.M", Package: "A", Info: makeTypInfo(MethodDecl, 4, 4)}: true,
+	}
+	expB := make(map[string]Ident)
+	for name, id := range exports["A"] {
+		if !removed[id] {
+			expB[name] = id
+		}
+	}
+	for id := range added {
+		expB[id.Name] = id
+	}
+	identsB := make(map[TypKind]map[string][]Ident)
+	for _, id := range expB {
+		k := id.Info.Kind()
+		if identsB[k] == nil {
+			identsB[k] = make(map[string][]Ident)
+		}
+		name := id.name()
+		identsB[k][name] = append(identsB[k][name], id)
+	}
+	for _, m := range identsB {
+		for _, ids := range m {
+			for _, id := range ids {
+				if removed[id] {
+					t.Fatalf("Merge: internal error added (%+v)", id)
+				}
+			}
+		}
+	}
+	identsA := make(map[TypKind]map[string][]Ident)
+	for _, m := range exports {
+		for _, id := range m {
+			k := id.Info.Kind()
+			if identsA[k] == nil {
+				identsA[k] = make(map[string][]Ident)
+			}
+			name := id.name()
+			identsA[k][name] = append(identsA[k][name], id)
+		}
+	}
+	packagePath := map[string]map[string]bool{
+		"A": map[string]bool{"A": true},
+	}
+	x := &Index{
+		packagePath: packagePath,
+		exports:     exports,
+		idents:      identsA,
+	}
+	x.mergeIdents(expA, expB)
+	seen := make(map[Ident]bool)
+	for _, m := range x.idents {
+		for _, ids := range m {
+			for _, id := range ids {
+				seen[id] = true
+				if removed[id] {
+					t.Errorf("Merge: did not remove (%+v)", id)
+				}
+			}
+		}
+	}
+	for _, m := range identsB {
+		for _, ids := range m {
+			for _, id := range ids {
+				if !seen[id] {
+					t.Errorf("Merge: did not add (%+v)", id)
+				}
+			}
+		}
+	}
+}
+
 func TestRemovePackage(t *testing.T) {
 	pakA := &Package{Name: "A", ImportPath: "A"}
 	pakB := &Package{Name: "B", ImportPath: "B"}
