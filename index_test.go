@@ -34,6 +34,8 @@ func TestIdentName(t *testing.T) {
 }
 
 func TestMergeIdents(t *testing.T) {
+	// TODO: organize and add more test cases
+
 	exports := map[string]map[string]Ident{
 		"A": map[string]Ident{
 			"A1":   Ident{Name: "A1", Package: "A", Info: makeTypInfo(ConstDecl, 1, 1)},
@@ -124,6 +126,8 @@ func TestMergeIdents(t *testing.T) {
 }
 
 func TestRemovePackage(t *testing.T) {
+	// TODO: organize and add more test cases
+
 	pakA := &Package{Name: "A", ImportPath: "A"}
 	pakB := &Package{Name: "B", ImportPath: "B"}
 	exports := map[string]map[string]Ident{

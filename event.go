@@ -34,6 +34,19 @@ func (e EventType) verb() string {
 	return "invalid"
 }
 
+var eventTypeColor = [...]string{
+	"\033[32created\033[0m", // green
+	"\033[33updated\033[0m", // yellow
+	"\033[31deleted\033[0m", // red
+}
+
+func (e EventType) color() string {
+	if int(e) < len(eventTypeColor) {
+		return eventTypeColor[e]
+	}
+	return "invalid"
+}
+
 type Eventer interface {
 	Event() EventType
 	String() string

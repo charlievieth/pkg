@@ -69,7 +69,7 @@ func (x *Index) notify(typ EventType, path string) {
 	}
 	e := IndexEvent{
 		typ: typ,
-		msg: fmt.Sprintf("Index: %s %q", typ, path),
+		msg: fmt.Sprintf("Index: %s %q", typ.color(), path),
 	}
 	x.c.notify(e)
 }

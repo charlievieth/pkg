@@ -8,43 +8,39 @@ import (
 )
 
 type Corpus struct {
-	ctxt          *Context
-	MaxDepth      int
-	LogEvents     bool
-	IndexGoCode   bool
-	IndexThrottle float64
-	IndexInterval time.Duration
-	log           *log.Logger
-	idents        *Index
-	packages      *PackageIndex
-	dirs          map[string]*Directory
-	eventCh       chan Eventer
-	mu            sync.RWMutex
-	lastUpdate    time.Time
+	ctxt               *Context
+	MaxDepth           int
+	LogEvents          bool
+	IndexGoCode        bool
+	IndexThrottle      float64
+	IndexInterval      time.Duration
+	log                *log.Logger
+	idents             *Index
+	packages           *PackageIndex
+	dirs               map[string]*Directory
+	eventCh            chan Eventer
+	mu                 sync.RWMutex
+	lastUpdate         time.Time
+	refreshIndexSignal chan bool
+	stop               chan bool
+	refreshInterval    chan time.Duration // use to change refresh interval
+	wg                 sync.WaitGroup
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
 func NewCorpus() *Corpus {
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	c := &Corpus{
-		ctxt:        NewContext(nil, 0),
-		dirs:        make(map[string]*Directory),
-		MaxDepth:    defaultMaxDepth,
-		IndexGoCode: true,
-		LogEvents:   false,
-		log:         logger,
-		eventCh:     make(chan Eventer, 200),
+		ctxt:               NewContext(nil, 0),
+		dirs:               make(map[string]*Directory),
+		MaxDepth:           defaultMaxDepth,
+		IndexGoCode:        true,
+		LogEvents:          false,
+		log:                logger,
+		eventCh:            make(chan Eventer, 200),
+		refreshIndexSignal: make(chan bool, 1), // buffer
 	}
 	return c
-}
-
-func (c *Corpus) EventStream() {
-	for e := range c.eventCh {
-		c.log.Println(e.String())
-		if err := e.Callback(c); err != nil {
-			_ = err
-		}
-	}
 }
 
 func (c *Corpus) lazyInitEventChan() {
@@ -58,7 +54,7 @@ func (c *Corpus) lazyInitEventChan() {
 }
 
 func (c *Corpus) notify(e Eventer) {
-	if !c.LogEvents {
+	if !c.LogEvents || e == nil {
 		return
 	}
 	c.lazyInitEventChan()
@@ -67,6 +63,95 @@ func (c *Corpus) notify(e Eventer) {
 	case <-time.After(time.Millisecond * 100):
 		if c.LogEvents {
 			c.log.Println("Corpus: sending event timed out")
+		}
+	}
+}
+
+func (c *Corpus) eventStream() {
+	c.wg.Add(1)
+	defer c.wg.Done()
+	for {
+		select {
+		case e := <-c.eventCh:
+			c.log.Println(e.String())
+			if err := e.Callback(c); err != nil {
+				// TODO: Add more info to event
+				c.log.Printf("Error: %s")
+			}
+		case <-c.stop:
+			return
+		}
+	}
+}
+
+func (c *Corpus) refreshIndex() {
+	select {
+	case c.refreshIndexSignal <- true:
+	default:
+	}
+}
+
+func (c *Corpus) refreshIndexLoop() {
+	c.wg.Add(1)
+	defer c.wg.Done()
+	if c.IndexInterval == 0 {
+		c.IndexInterval = time.Second * 5
+	}
+	for {
+		select {
+		case <-c.refreshIndexSignal:
+			c.updateIndex()
+			time.Sleep(c.IndexInterval)
+		case <-c.stop:
+			return
+		}
+	}
+}
+
+func (c *Corpus) refreshIndexTicker() {
+	c.wg.Add(1)
+	defer c.wg.Done()
+	t := time.NewTicker(c.IndexInterval)
+	for {
+		select {
+		case <-t.C:
+			c.refreshIndex()
+		case d := <-c.refreshInterval:
+			d = c.refreshMinDuration(d)
+			t = time.NewTicker(d)
+		case <-c.stop:
+			return
+		}
+	}
+}
+
+func (c *Corpus) refreshMinDuration(d time.Duration) time.Duration {
+	const min = time.Millisecond * 250
+	if d < min {
+		d = min
+	}
+	return d
+}
+
+func (c *Corpus) updateIndex() {
+	srcDirs := c.ctxt.SrcDirs()
+	seen := make(map[string]bool)
+	for _, root := range srcDirs {
+		seen[root] = true
+		var d *Directory
+		if dir := c.dirs[root]; dir != nil {
+			d = newTreeBuilder(c, c.MaxDepth).updateDirTree(dir)
+		} else {
+			d = c.newDirectory(root, c.MaxDepth)
+		}
+		if d != nil {
+			c.dirs[root] = d
+		}
+	}
+	// Remove missing directories
+	for root := range c.dirs {
+		if !seen[root] {
+			delete(c.dirs, root)
 		}
 	}
 }
@@ -81,6 +166,8 @@ func (c *Corpus) Init() error {
 	if err := c.initDirTree(); err != nil {
 		return err
 	}
+	go c.eventStream()
+	go c.refreshIndexLoop()
 	return nil
 }
 

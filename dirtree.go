@@ -38,7 +38,7 @@ func (t *treeBuilder) notify(typ EventType, path string) {
 	}
 	e := Event{
 		typ: typ,
-		msg: fmt.Sprintf("DirTree: %s %q", typ.verb(), path),
+		msg: fmt.Sprintf("DirTree: %s %q", typ.color(), path),
 	}
 	t.c.notify(e)
 }

@@ -297,6 +297,17 @@ func newPackageIndex(c *Corpus) *PackageIndex {
 	}
 }
 
+func (x *PackageIndex) notify(typ EventType, path string) {
+	if x.c == nil {
+		return
+	}
+	e := Event{
+		typ: typ,
+		msg: fmt.Sprintf("Package: %s %q", typ.color(), path),
+	}
+	x.c.notify(e)
+}
+
 func (p *PackageIndex) intern(s string) string {
 	return p.strings.Intern(s)
 }
@@ -339,9 +350,13 @@ func (x *PackageIndex) lookupPath(path string) (*Package, bool) {
 }
 
 func (x *PackageIndex) remove(root, path string) {
+	if x.packages == nil {
+		return
+	}
 	x.mu.Lock()
-	if x.packages != nil {
+	if _, ok := x.packages[root]; ok {
 		delete(x.packages[root], path)
+		x.notify(DeleteEvent, path)
 	}
 	x.mu.Unlock()
 }
@@ -392,6 +407,18 @@ func (x *PackageIndex) isInstalled(p *Package) bool {
 		target = pathpkg.Join(p.Root, pkga)
 	}
 	return fs.IsFile(target)
+}
+
+func (x *PackageIndex) UpdatePackage(p *Package) (*Package, error) {
+	if p == nil {
+		return nil, errors.New("pkg: cannot update nil package")
+	}
+	fi, err := fs.Stat(p.Dir)
+	if err != nil {
+		x.remove(p.SrcRoot, p.ImportPath)
+		return nil, err
+	}
+	return x.updatePkg(p.Dir, fi)
 }
 
 func (x *PackageIndex) updatePkg(dir string, fi os.FileInfo) (*Package, error) {
@@ -464,6 +491,14 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 		}
 	}
 
+	// Removes the package from the index on error.
+	exitErr := func(err error) (*Package, error) {
+		if pkgFound {
+			x.remove(srcRoot, importPath)
+		}
+		return nil, err
+	}
+
 	// Set error to nil, if whatever triggered
 	// it is still present it will be reset.
 	p.err = nil
@@ -529,6 +564,7 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 
 			pkgName := af.Name.Name
 			if !x.setPackageName(p, f.Name, pkgName) {
+				p.Installed = false
 				x.addPackage(p)
 				return p, err
 			}
@@ -542,7 +578,7 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 
 	// No Go source files
 	if !p.isPkgDir() {
-		return nil, &NoGoError{dir}
+		return exitErr(&NoGoError{dir})
 	}
 
 	// If there are no buildable Go source files the package
@@ -560,11 +596,11 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 		// If there were parse errors we may have
 		// removed all the Go source files.
 		if !p.isPkgDir() {
-			return nil, &NoGoError{}
+			return exitErr(&NoGoError{})
 		}
 		// TODO: Parse test files, or use a better error.
 		if p.Name == "" {
-			return nil, &NoGoError{dir}
+			return exitErr(&NoGoError{dir})
 		}
 	}
 
