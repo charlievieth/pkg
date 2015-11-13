@@ -1,4 +1,4 @@
-package pkg2
+package pkg
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"git.vieth.io/pkg2/fs"
+	"git.vieth.io/pkg/fs"
 )
 
 type Context struct {
@@ -89,18 +89,19 @@ func (c *Context) MatchFile(dir, name string) bool {
 }
 
 func (c *Context) Update() {
-	if c.ctxt == nil || c.outdated() {
+	if c.ctxt == nil || c.srcDirs == nil || c.outdated() {
 		c.doUpdate(runtime.GOROOT(), os.Getenv("GOPATH"))
 	}
 }
 
-func (c *Context) outdated() (ok bool) {
-	c.mu.RLock()
-	if c.updateInterval > 0 {
-		ok = time.Since(c.lastUpdate) >= c.updateInterval
+func (c *Context) outdated() bool {
+	if c.updateInterval <= 0 {
+		return false
 	}
+	c.mu.RLock()
+	update := time.Since(c.lastUpdate) >= c.updateInterval
 	c.mu.RUnlock()
-	return ok
+	return update
 }
 
 func (c *Context) doUpdate(root, path string) {

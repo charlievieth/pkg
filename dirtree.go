@@ -1,4 +1,4 @@
-package pkg2
+package pkg
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"git.vieth.io/pkg2/fs"
+	"git.vieth.io/pkg/fs"
 )
 
 const defaultMaxDepth = 512

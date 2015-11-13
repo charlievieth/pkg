@@ -1,4 +1,4 @@
-package pkg2
+package pkg
 
 import (
 	"go/ast"
@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"path/filepath"
 
-	"git.vieth.io/pkg2/fs"
+	"git.vieth.io/pkg/fs"
 )
 
 func parseFileName(fset *token.FileSet, filename string) (name string, ok bool) {

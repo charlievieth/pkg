@@ -1,4 +1,4 @@
-package pkg2
+package pkg
 
 import (
 	"errors"
@@ -12,8 +12,8 @@ import (
 	"sort"
 	"sync"
 
-	"git.vieth.io/pkg2/fs"
-	"git.vieth.io/pkg2/util"
+	"git.vieth.io/pkg/fs"
+	"git.vieth.io/pkg/util"
 )
 
 type File struct {

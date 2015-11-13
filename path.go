@@ -1,4 +1,4 @@
-package pkg2
+package pkg
 
 // This file contains utilities for working with file paths and Go files.
 

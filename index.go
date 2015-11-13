@@ -1,14 +1,14 @@
-package pkg2
+package pkg
 
 import (
 	"fmt"
-	"git.vieth.io/pkg2/fs"
+	"git.vieth.io/pkg/fs"
 	"go/ast"
 	"go/token"
 	"strings"
 	"sync"
 
-	"git.vieth.io/pkg2/util"
+	"git.vieth.io/pkg/util"
 )
 
 type Ident struct {

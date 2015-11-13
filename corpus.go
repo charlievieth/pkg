@@ -1,4 +1,4 @@
-package pkg2
+package pkg
 
 import (
 	"log"
