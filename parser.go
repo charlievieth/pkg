@@ -1,14 +1,16 @@
-package pkg
+package pkg2
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"path/filepath"
+
+	"git.vieth.io/pkg2/fs"
 )
 
 func parseFileName(fset *token.FileSet, filename string) (name string, ok bool) {
-	src, err := readFile(filename)
+	src, err := fs.ReadFile(filename)
 	if err != nil {
 		return "", false
 	}
@@ -20,7 +22,7 @@ func parseFileName(fset *token.FileSet, filename string) (name string, ok bool) 
 }
 
 func parseFile(fset *token.FileSet, filename string, mode parser.Mode) (*ast.File, error) {
-	src, err := readFile(filename)
+	src, err := fs.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}

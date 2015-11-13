@@ -1,18 +1,25 @@
-package pkg
+package pkg2
 
 import (
+	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 )
 
+// WARN:
+var (
+	_ = filepath.ListSeparator
+	_ = sort.SearchInts([]int{1}, 1)
+)
+
 type Corpus struct {
 	ctxt       *Context
 	lastUpdate time.Time
 
-	dirs     map[string]*Directory
-	packages map[string]map[string]*Package // "GOPATH" => "net/http" => Pkg "http"
+	dirs map[string]*Directory
 
 	MaxDepth int
 	mu       sync.RWMutex
@@ -22,33 +29,88 @@ type Corpus struct {
 	// WARN: New
 	IndexEnabled bool
 	IndexGoCode  bool
+	LogEvents    bool
+	log          *log.Logger
 
-	index    *Indexer
-	pkgIndex *PackageIndexer
+	eventCh chan Eventer
+
+	idents   *Index
+	packages *PackageIndex
+}
+
+func (c *Corpus) EventStream() {
+	for e := range c.eventCh {
+		c.log.Println(e.String())
+		if err := e.Callback(c); err != nil {
+			_ = err
+		}
+	}
+}
+
+func (c *Corpus) lazyInitEventChan() {
+	if c.eventCh == nil {
+		c.mu.Lock()
+		if c.eventCh == nil {
+			c.eventCh = make(chan Eventer, 200)
+		}
+		c.mu.Unlock()
+	}
+}
+
+func (c *Corpus) notify(e Eventer) {
+	if !c.LogEvents {
+		return
+	}
+	c.lazyInitEventChan()
+	select {
+	case c.eventCh <- e:
+	case <-time.After(time.Millisecond * 100):
+		if c.LogEvents {
+			c.log.Println("Corpus: sending event timed out")
+		}
+	}
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
-func NewCorpus(mode ImportMode, indexFileInfo bool) *Corpus {
+func NewCorpus(mode ImportMode) *Corpus {
+	logger := log.New(os.Stdout, "", log.LstdFlags)
 	c := &Corpus{
 		ctxt:          NewContext(nil, 0),
 		dirs:          make(map[string]*Directory),
-		MaxDepth:      512,
+		MaxDepth:      defaultMaxDepth,
 		PackageMode:   mode,
-		IndexFileInfo: indexFileInfo,
+		IndexFileInfo: true,
 		IndexEnabled:  true,
 		IndexGoCode:   true,
+		LogEvents:     false,
+		log:           logger,
+		eventCh:       make(chan Eventer, 200),
 	}
 	return c
 }
 
 func (c *Corpus) Init() error {
-	if c.pkgIndex == nil {
-		c.pkgIndex = newPackageIndexer(c)
+	if c.packages == nil {
+		c.packages = newPackageIndex(c)
+	}
+	if c.IndexGoCode {
+		c.idents = newIndex(c)
 	}
 	if err := c.initDirTree(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// WARN
+func (c *Corpus) Update() {
+	for root, dir := range c.dirs {
+		t := newTreeBuilder(c, c.MaxDepth)
+		dir = t.updateDirTree(dir)
+		if dir == nil {
+			panic("NIL DIR " + root)
+		}
+	}
 }
 
 // initDirTree, initializes the Directory tree's at build.Context.SrcDirs().
@@ -57,60 +119,25 @@ func (c *Corpus) Init() error {
 func (c *Corpus) initDirTree() error {
 	srcDirs := c.ctxt.SrcDirs()
 	for _, root := range srcDirs {
-		if err := c.updateDirTree(root); err != nil {
-			return err
+		if dir := c.newDirectory(root, c.MaxDepth); dir != nil {
+			c.dirs[root] = dir
 		}
 	}
 	return nil
 }
 
-// updateDirTree, updates the Directory tree at root.  If no Directory tree is
-// currently stored at root - one is created.  An error is returned if root is
-// not a directory.
-func (c *Corpus) updateDirTree(root string) error {
-	if c.dirs == nil {
-		c.dirs = make(map[string]*Directory)
+func (c *Corpus) newDirectory(root string, maxDepth int) *Directory {
+	t := newTreeBuilder(c, maxDepth)
+	fi, err := os.Stat(root)
+	if err != nil || !fi.IsDir() {
+		return nil
 	}
-	var (
-		dir *Directory
-		ok  bool
-		err error
-	)
-	if dir, ok = c.dirs[root]; dir != nil {
-		dir, err = c.updateDirectory(dir, c.MaxDepth)
-	} else {
-		if ok {
-			delete(c.dirs, root)
-		}
-		dir, err = c.newDirectory(root, c.MaxDepth)
-	}
-	if dir != nil {
-		c.dirs[root] = dir
-	} else {
-		delete(c.dirs, root)
-	}
-	return err
+	return t.newDirTree(root, fi, 0, false)
 }
 
-func (c *Corpus) Update() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	seen := make(map[string]bool)
-	for _, path := range c.ctxt.SrcDirs() {
-		seen[path] = true
-		if err := c.updateDirTree(path); err != nil {
-			// TODO:
-		}
-	}
-
-	// WARN: Do we want to remove directories?
-	// Cleanup root directories
-	for path := range seen {
-		if !seen[path] {
-			delete(c.dirs, path)
-		}
-	}
+// WARN
+func (c *Corpus) Packages() map[string]map[string]*Package {
+	return c.packages.packages
 }
 
 // WARN
@@ -118,68 +145,10 @@ func (c *Corpus) Dirs() map[string]*Directory {
 	return c.dirs
 }
 
-// WARN: Remove LOCKS !!!
-//
-// TODO: Toggle 'internal' behavior based on Go version.
-//
-// ListImports, returns the list of available imports for path.
-func (c *Corpus) ListImports(path string) []string {
-	c.Update()
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.dirs == nil || len(c.dirs) == 0 {
-		return nil // []string{} ???
+func (c *Corpus) DirList() map[string]*DirList {
+	m := make(map[string]*DirList)
+	for root, dir := range c.dirs {
+		m[root] = dir.listing(true, nil)
 	}
-	list := make([]string, 0, 512)
-	for _, d := range c.dirs {
-		d.listPkgPaths(filepathDir(path), &list)
-	}
-	sort.Strings(list)
-	return list
-}
-
-func (c *Corpus) ListPackages() []*Package {
-	list := make([]*Package, 0, 64)
-	for _, d := range c.dirs {
-		d.listPackages(&list)
-	}
-	return list
-}
-
-func (c *Corpus) Lookup(path string) *Directory {
-	// WARN
-	// c.Update()
-	// c.mu.RLock()
-	// defer c.mu.RUnlock()
-
-	for p, dir := range c.dirs {
-		if hasPrefix(path, p) {
-			if d := dir.Lookup(path); d != nil {
-				return d
-			}
-		}
-	}
-	return nil
-}
-
-func (c *Corpus) LookupPackage(path string) *Package {
-	// if p := c.pkgIndex.lookupPath(filepath.Clean(path)); p != nil {
-	// 	fi, err := os.Stat(p.Dir)
-
-	// }
-	return c.pkgIndex.lookupPath(filepath.Clean(path))
-}
-
-// WARN: Dev only
-func (c *Corpus) Index() *Indexer {
-	return c.index
-}
-
-func (c *Corpus) InitIndex() {
-	if c.index == nil {
-		c.index = newIndexer(c)
-	}
-	for _, d := range c.dirs {
-		c.index.indexDirectory(d)
-	}
+	return m
 }

@@ -1,27 +1,24 @@
-package pkg
-
-// TODO:
-// 	- Consider removing Corupus.MaxDepth
-//  - Consider making pkg selection version aware
+package pkg2
 
 import (
-	"errors"
-	"go/token"
+	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
+	pathpkg "path"
 	"strings"
 	"sync"
+
+	"git.vieth.io/pkg2/fs"
 )
+
+const defaultMaxDepth = 512
 
 type treeBuilder struct {
 	c        *Corpus
+	x        *PackageIndex
 	maxDepth int
-	seen     map[string]bool // dirs seen - to prevent loops
-	mu       sync.Mutex      // mutext for seen map
+	names    map[string]bool // dirs names - to prevent loops
+	mu       sync.Mutex      // mutext for names map
 }
-
-const defaultMaxDepth = 512
 
 func newTreeBuilder(c *Corpus, maxDepth int) *treeBuilder {
 	if maxDepth <= 0 {
@@ -29,19 +26,215 @@ func newTreeBuilder(c *Corpus, maxDepth int) *treeBuilder {
 	}
 	return &treeBuilder{
 		c:        c,
+		x:        c.packages,
 		maxDepth: maxDepth,
-		seen:     make(map[string]bool),
+		names:    make(map[string]bool),
 	}
 }
 
-// Conventional name for directories containing test data.
-// Excluded from directory trees.
-//
-const testdataDirName = "testdata"
+func (t *treeBuilder) notify(typ EventType, path string) {
+	if t.c == nil || !t.c.LogEvents {
+		return
+	}
+	e := Event{
+		typ: typ,
+		msg: fmt.Sprintf("DirTree: %s %q", typ.verb(), path),
+	}
+	t.c.notify(e)
+}
+
+// seen, reports if the path has been seen.
+func (t *treeBuilder) seen(path string) (ok bool) {
+	t.mu.Lock()
+	if ok = t.names[path]; !ok {
+		t.names[path] = true
+	}
+	t.mu.Unlock()
+	return ok
+}
+
+// indexDir, indexes the package found in directory path and returns the
+// package name and if it has Go source files.
+func (t *treeBuilder) indexDir(path string, fi os.FileInfo,
+	files []os.FileInfo) (pkgName string, hasPkg bool) {
+
+	// TODO: This is ugly and only adds indirection - consider removing.
+	pkg, err := t.x.indexPkg(path, fi, files)
+	if err == nil {
+		pkgName = pkg.Name
+		hasPkg = pkg.isPkgDir()
+	}
+	return
+}
+
+func (t *treeBuilder) updateDir(dir string, fi os.FileInfo) (pkgName string, hasPkg bool) {
+	pkg, _ := t.x.updatePkg(dir, fi)
+	if pkg != nil {
+		pkgName = pkg.Name
+		hasPkg = pkg.isPkgDir()
+	}
+	return
+}
+
+func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
+	// exitErr, deletes all Packages rooted at d.
+	exitErr := func(d *Directory) *Directory {
+		t.removePackage(d)
+		return nil
+	}
+	if t.seen(dir.Path) || isIgnored(dir.Name) {
+		return exitErr(dir)
+	}
+	if t.maxDepth != 0 && dir.Depth >= t.maxDepth {
+		return dir
+	}
+	fi, err := fs.Stat(dir.Path)
+	if err != nil || !fi.IsDir() {
+		t.removePackage(dir)
+		return exitErr(dir)
+	}
+	same := fs.SameFile(dir.Info, fi)
+	dir.Info = fi
+	var dirchs []chan *Directory
+	if same {
+		if dir.HasPkg {
+			dir.PkgName, dir.HasPkg = t.updateDir(dir.Path, fi)
+		}
+		for _, d := range dir.Dirs {
+			ch := make(chan *Directory, 1)
+			dirchs = append(dirchs, ch)
+			go func(d *Directory) {
+				ch <- t.updateDirTree(d)
+			}(d)
+		}
+	} else {
+		list, err := fs.Readdir(dir.Path)
+		if err != nil {
+			return exitErr(dir)
+		}
+		dir.PkgName, dir.HasPkg = t.indexDir(dir.Path, fi, list)
+		for _, fi := range list {
+			if isPkgDir(fi) {
+				ch := make(chan *Directory, 1)
+				dirchs = append(dirchs, ch)
+				if d := dir.Dirs[fi.Name()]; d != nil {
+					go func(d *Directory) {
+						ch <- t.updateDirTree(d)
+					}(d)
+				} else {
+					go func(fi os.FileInfo) {
+						path := pathpkg.Join(dir.Path, fi.Name())
+						ch <- t.newDirTree(path, fi, dir.Depth, dir.Internal)
+					}(fi)
+				}
+			}
+		}
+	}
+	// Create sub-directory tree
+	dirs := make(map[string]*Directory)
+	for _, ch := range dirchs {
+		if d := <-ch; d != nil {
+			dirs[d.Name] = d
+		}
+	}
+	if !dir.HasPkg && len(dirs) == 0 {
+		return exitErr(dir)
+	}
+	// Do not assign until we know there are no errors.
+	// Removing sub-directory packages requires the old
+	// dirs map.
+	dir.Dirs = dirs
+	return dir
+}
+
+func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
+	internal bool) *Directory {
+
+	name := info.Name()
+	if t.seen(path) || isIgnored(name) {
+		return nil
+	}
+	if t.maxDepth != 0 && depth >= t.maxDepth {
+		// Return a dummy directory so that the
+		// parent directory does not discard it.
+		return &Directory{
+			Depth:    depth,
+			Path:     path,
+			Name:     name,
+			Internal: internal,
+		}
+	}
+	list, err := fs.Readdir(path)
+	if err != nil {
+		return nil
+	}
+
+	// If the current name is "internal" set internal to true
+	// so that all sub-directories will also be marked "internal".
+	//
+	// TODO (CEV): If supported, handle nested "internal" directories.
+	if !internal && isInternal(path) {
+		internal = true
+	}
+
+	// Index package.  To reduce strain on the filesystem
+	// index before starting the sub-directory goroutines.
+	pkgName, hasPkg := t.indexDir(path, info, list)
+
+	// Start goroutings to visit sub-directories
+	var dirchs []chan *Directory
+	for _, fi := range list {
+		if isPkgDir(fi) {
+			ch := make(chan *Directory, 1)
+			dirchs = append(dirchs, ch)
+			go func(fi os.FileInfo) {
+				path := pathpkg.Join(path, fi.Name())
+				ch <- t.newDirTree(path, fi, depth+1, internal)
+			}(fi)
+		}
+	}
+
+	// Create sub-directory tree
+	dirs := make(map[string]*Directory)
+	for _, ch := range dirchs {
+		if d := <-ch; d != nil {
+			dirs[d.Name] = d
+		}
+	}
+
+	// If there is no package and no sub-directories containing
+	// package files, ignore the directory.
+	if !hasPkg && len(dirs) == 0 {
+		return nil
+	}
+
+	t.notify(CreateEvent, path)
+	return &Directory{
+		Path:     path,
+		Name:     name,
+		PkgName:  pkgName,
+		HasPkg:   hasPkg,
+		Internal: internal,
+		Info:     info,
+		Depth:    depth,
+		Dirs:     dirs,
+	}
+}
+
+// removePackage, removes any Packages rooted at dir.
+func (t *treeBuilder) removePackage(dir *Directory) {
+	if dir != nil {
+		return
+	}
+	if dir.HasPkg {
+		t.x.removePath(dir.Path)
+	}
+	for d := range dir.iter(true) {
+		t.removePackage(d)
+	}
+}
 
 type Directory struct {
-	Pkg *Package
-
 	Path     string // directory path
 	Name     string // directory name
 	PkgName  string // Go pkg name
@@ -50,200 +243,6 @@ type Directory struct {
 	Info     os.FileInfo
 	Dirs     map[string]*Directory
 	Depth    int
-}
-
-func (c *Corpus) newDirectory(root string, maxDepth int) (*Directory, error) {
-	fi, err := os.Stat(root)
-	if err != nil {
-		return nil, err
-	}
-	if !fi.IsDir() {
-		return nil, errors.New("pkg: invalid directory root: " + root)
-	}
-	t := newTreeBuilder(c, maxDepth)
-	dir := t.newDirTree(token.NewFileSet(), root, fi.Name(), 0, false)
-	return dir, nil
-}
-
-func (c *Corpus) updateDirectory(dir *Directory, maxDepth int) (*Directory, error) {
-	if dir == nil {
-		return nil, errors.New("pkg: cannot update nil Directory")
-	}
-	fi, err := os.Stat(dir.Path)
-	if err != nil {
-		return nil, err
-	}
-	if !fi.IsDir() {
-		return nil, errors.New("pkg: invalid directory root: " + dir.Path)
-	}
-	t := newTreeBuilder(c, maxDepth)
-	return t.updateDirTree(dir, token.NewFileSet()), nil
-}
-
-// Seen, reports if the path has been seen.
-func (t *treeBuilder) Seen(path string) (ok bool) {
-	t.mu.Lock()
-	if ok = t.seen[path]; !ok {
-		t.seen[path] = true
-	}
-	t.mu.Unlock()
-	return ok
-}
-
-// newDirTree, creates a new package directory tree anchored at root.
-func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
-	depth int, internal bool) *Directory {
-
-	if t.Seen(path) {
-		return nil
-	}
-	if t.maxDepth != 0 && depth >= t.maxDepth {
-		return &Directory{
-			Depth: depth,
-			Path:  path,
-			Name:  name,
-		}
-	}
-	// TODO: handle errors
-	fi, err := os.Stat(path)
-	if err != nil || !fi.IsDir() {
-		return nil
-	}
-	list, err := readdirnames(path)
-	if err != nil {
-		return nil
-	}
-	if !internal && isInternal(path) {
-		internal = true
-	}
-	dir := &Directory{
-		Path:     path,
-		Name:     name,
-		Internal: internal,
-		Info:     fi,
-		Depth:    depth,
-	}
-	exitErr := func() *Directory {
-		if dir.Pkg != nil {
-			t.c.pkgIndex.deletePackage(dir.Pkg)
-			dir.Pkg = nil
-		}
-		return nil
-	}
-	// To reduce IO contention update package before
-	// updating sub-directories.
-	pkg := t.c.pkgIndex.visitDirectory(dir, list)
-	if pkg != nil {
-		dir.Pkg = pkg
-		dir.PkgName = pkg.Name
-		dir.HasPkg = true
-	}
-	var dirchs []chan *Directory
-	for _, name := range list {
-		if isPkgDir(name) {
-			dirchs = append(dirchs, t.newSubDirTree(dir, fset, name))
-		}
-	}
-	dirs := make(map[string]*Directory)
-	for _, ch := range dirchs {
-		if d := <-ch; d != nil {
-			dirs[d.Name] = d
-		}
-	}
-	if len(dirs) == 0 && !dir.HasPkg {
-		return exitErr()
-	}
-	dir.Dirs = dirs
-	return dir
-}
-
-func (t *treeBuilder) newSubDirTree(dir *Directory, fset *token.FileSet,
-	name string) chan *Directory {
-
-	ch := make(chan *Directory, 1)
-	go func() {
-		path := filepath.Join(dir.Path, name)
-		ch <- t.newDirTree(fset, path, name, dir.Depth+1, dir.Internal)
-	}()
-	return ch
-}
-
-func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
-
-	if t.Seen(dir.Path) {
-		return nil
-	}
-	if t.maxDepth != 0 && dir.Depth >= t.maxDepth {
-		return dir
-	}
-
-	// Remove Package, if any, on error.
-	exitErr := func() *Directory {
-		if dir.Pkg != nil {
-			t.c.pkgIndex.deletePackage(dir.Pkg)
-			dir.Pkg = nil
-		}
-		return nil
-	}
-
-	fi, err := os.Stat(dir.Path)
-	if err != nil || !fi.IsDir() {
-		return exitErr()
-	}
-	dir.Info, fi = fi, dir.Info
-	var dirchs []chan *Directory
-
-	if sameFile(fi, dir.Info) {
-		// No change to the directory according to the file system.
-		// TODO (CEV): Test granularity of Linux and Windows.
-		if dir.Pkg != nil {
-			dir.Pkg = t.c.pkgIndex.visitDirectory(dir, nil)
-		}
-		for _, d := range dir.Dirs {
-			dirchs = append(dirchs, t.updateSubDirTree(d, fset))
-		}
-	} else {
-		// We only read in names if the directory changed,
-		// filesystem IO accounts for +95% of the update.
-		list, err := readdirnames(dir.Path)
-		if err != nil {
-			return exitErr()
-		}
-		dir.Pkg = t.c.pkgIndex.visitDirectory(dir, list)
-		// Start update Goroutines
-		for _, name := range list {
-			if isPkgDir(name) {
-				if d := dir.Dirs[name]; d != nil {
-					dirchs = append(dirchs, t.updateSubDirTree(d, fset))
-				} else {
-					dirchs = append(dirchs, t.newSubDirTree(dir, fset, name))
-				}
-			}
-		}
-	}
-	if dir.Pkg != nil {
-		dir.PkgName = dir.Pkg.Name
-		dir.HasPkg = true
-	}
-	dirs := make(map[string]*Directory)
-	for _, ch := range dirchs {
-		if d := <-ch; d != nil {
-			dirs[d.Name] = d
-		}
-	}
-	if len(dirs) == 0 && !dir.HasPkg {
-		return exitErr()
-	}
-	dir.Dirs = dirs
-	return dir
-}
-
-func (t *treeBuilder) updateSubDirTree(dir *Directory, fset *token.FileSet) chan *Directory {
-	ch := make(chan *Directory, 1)
-	go func() {
-		ch <- t.updateDirTree(dir, fset)
-	}()
-	return ch
 }
 
 func (dir *Directory) walk(c chan<- *Directory, skipRoot bool) {
@@ -274,16 +273,16 @@ func (dir *Directory) lookupLocal(name string) *Directory {
 }
 
 func splitPath(p string) []string {
-	p = strings.TrimPrefix(p, string(os.PathSeparator))
+	p = strings.TrimPrefix(p, "/")
 	if p == "" {
 		return nil
 	}
-	return strings.Split(p, string(os.PathSeparator))
+	return strings.Split(p, "/")
 }
 
-func (dir *Directory) Lookup(path string) *Directory {
-	d := splitPath(dir.Path) // dir.Path assumed to be clean
-	p := splitPath(filepath.Clean(path))
+func (dir *Directory) lookup(path string) *Directory {
+	d := splitPath(dir.Path)
+	p := splitPath(clean(path))
 	i := 0
 	for i < len(d) {
 		if i >= len(p) || d[i] != p[i] {
@@ -298,70 +297,65 @@ func (dir *Directory) Lookup(path string) *Directory {
 	return dir
 }
 
-func (dir *Directory) LookupPackage(path string) *Package {
-	if d := dir.Lookup(path); d != nil {
-		return d.Pkg
-	}
-	return nil
+// TODO: Include Golang license, this comes almost directly from godoc.
+
+type DirEntry struct {
+	Depth    int    // >= 0
+	Height   int    // = DirList.MaxHeight - Depth, > 0
+	Path     string // directory path; includes Name, relative to DirList root
+	Name     string // directory name
+	PkgName  string // package name, or "" if none
+	HasPkg   bool   // true if the directory contains at least one package
+	Internal bool   // true if the package is an "internal" package
 }
 
-func (dir *Directory) ImportList(path string) []string {
-	list := make([]string, 0, 512)
-	dir.listPkgPaths(filepathDir(path), &list)
-	sort.Strings(list)
-	return list
+type DirList struct {
+	MaxHeight int // directory tree height, > 0
+	List      []DirEntry
 }
 
-// listPkgPaths, appends the absolute paths of Go packages importable from path to
-// list, if path == "" internal import restrictions are ignored.
-func (dir *Directory) listPkgPaths(path string, list *[]string) {
-	if dir.Internal && !dir.matchInternal(path) {
-		return
+func (root *Directory) listing(skipRoot bool, filter func(string) bool) *DirList {
+	if root == nil {
+		return nil
 	}
-	if dir.HasPkg {
-		*list = append(*list, dir.Path)
-	}
-	for _, d := range dir.Dirs {
-		d.listPkgPaths(path, list)
-	}
-}
 
-// matchInternal, returns is path can import 'internal' directory d.
-func (d *Directory) matchInternal(path string) bool {
-	return d.Internal && path != "" && hasRoot(path, internalRoot(d.Path))
-}
-
-func (dir *Directory) listPackages(list *[]*Package) {
-	if dir.Pkg != nil {
-		*list = append(*list, dir.Pkg)
-	}
-	for _, d := range dir.Dirs {
-		d.listPackages(list)
-	}
-}
-
-func listDirs(dir *Directory, list *[]string, path string) {
-	*list = append(*list, dir.Path)
-	if dir.Dirs != nil {
-		for _, d := range dir.Dirs {
-			listDirs(d, list, path)
+	// determine number of entries n and maximum height
+	n := 0
+	minDepth := 1 << 30 // infinity
+	maxDepth := 0
+	for d := range root.iter(skipRoot) {
+		n++
+		if minDepth > d.Depth {
+			minDepth = d.Depth
+		}
+		if maxDepth < d.Depth {
+			maxDepth = d.Depth
 		}
 	}
-}
+	maxHeight := maxDepth - minDepth + 1
 
-// internalRoot, returns the parent directory of an internal package.
-func internalRoot(path string) string {
-	if n := strings.LastIndex(path, "internal"); n != -1 {
-		root := filepath.Dir(path[:n])
-		// Support Go 1.4
-		if filepath.Base(root) == "pkg" {
-			return filepath.Dir(root)
-		}
-		return root
+	if n == 0 {
+		return nil
 	}
-	return path
-}
 
-func isInternal(p string) bool {
-	return filepath.Base(p) == "internal"
+	// create list
+	list := make([]DirEntry, 0, n)
+	for d := range root.iter(skipRoot) {
+		if filter != nil && !filter(d.Path) {
+			continue
+		}
+		depth := d.Depth - minDepth
+		e := DirEntry{
+			Depth:    depth,
+			Height:   maxHeight - depth,
+			Path:     trimPathPrefix(d.Path, root.Path),
+			Name:     d.Name,
+			PkgName:  d.PkgName,
+			HasPkg:   d.HasPkg,
+			Internal: d.Internal,
+		}
+		list = append(list, e)
+	}
+
+	return &DirList{maxHeight, list}
 }

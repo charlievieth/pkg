@@ -1,4 +1,4 @@
-package pkg
+package pkg2
 
 import (
 	"testing"
@@ -34,8 +34,8 @@ func TestIdentName(t *testing.T) {
 }
 
 func TestRemovePackage(t *testing.T) {
-	pakA := Pak{Name: "A", ImportPath: "A"}
-	pakB := Pak{Name: "B", ImportPath: "B"}
+	pakA := &Package{Name: "A", ImportPath: "A"}
+	pakB := &Package{Name: "B", ImportPath: "B"}
 	exports := map[string]map[string]Ident{
 		"A": map[string]Ident{
 			"A1":   Ident{Name: "A1", Package: "A", Info: makeTypInfo(ConstDecl, 1, 1)},
@@ -65,8 +65,7 @@ func TestRemovePackage(t *testing.T) {
 		"A": map[string]bool{"A": true},
 		"B": map[string]bool{"B": true},
 	}
-	x := &Indexer{
-		strings:     make(map[string]string),
+	x := &Index{
 		packagePath: packagePath,
 		exports:     make(map[string]map[string]Ident),
 		idents:      make(map[TypKind]map[string][]Ident),
@@ -91,24 +90,24 @@ func TestRemovePackage(t *testing.T) {
 	}
 	x.removePackage(pakA)
 	if _, ok := x.exports["A"]; ok {
-		t.Fatalf("Indexer: failed to remove Pak: (%+v)", pakA)
+		t.Fatalf("Index: failed to remove Pak: (%+v)", pakA)
 	}
 	if _, ok := x.exports["B"]; !ok {
-		t.Fatalf("Indexer: removed Pak: (%+v)", pakB)
+		t.Fatalf("Index: removed Pak: (%+v)", pakB)
 	}
 	for _, m := range x.idents {
 		for _, ids := range m {
 			for _, id := range ids {
 				if id.Package == pakA.Name {
-					t.Errorf("Indexer: failed to remove ident: (%+v)", id)
+					t.Errorf("Index: failed to remove ident: (%+v)", id)
 				}
 			}
 		}
 	}
 	if x.packagePath["A"]["A"] {
-		t.Errorf("Indexer: failed to remove packagePath: %s", "A")
+		t.Errorf("Index: failed to remove packagePath: %s", "A")
 	}
 	if !x.packagePath["B"]["B"] {
-		t.Errorf("Indexer: removed packagePath: %s", "B")
+		t.Errorf("Index: removed packagePath: %s", "B")
 	}
 }

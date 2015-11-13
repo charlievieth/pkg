@@ -1,4 +1,4 @@
-package pkg
+package pkg2
 
 import (
 	"math/rand"
@@ -71,7 +71,10 @@ func randPaths() (string, string) {
 	return filepaths[rand.Intn(len(filepaths))], filepaths[rand.Intn(len(filepaths))]
 }
 
-func TestUpdate(t *testing.T) {
+func TestContextUpdate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Context Update: skipped test")
+	}
 	t.Parallel()
 	c := NewContext(nil, time.Minute)
 	for i := 0; i < 40; i++ {

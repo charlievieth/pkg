@@ -1,25 +1,26 @@
-package pkg
+package pkg2
 
 import (
+	"fmt"
 	"go/build"
 	"os"
+	pathpkg "path"
 	"runtime"
 	"sync"
 	"time"
+
+	"git.vieth.io/pkg2/fs"
 )
 
 type Context struct {
 	ctxt           *build.Context
 	srcDirs        []string
 	lastUpdate     time.Time
-	updateInterval time.Duration
+	updateInterval time.Duration // ignored if less than or equal to zero
 	mu             sync.RWMutex
 }
 
 func NewContext(ctxt *build.Context, updateInterval time.Duration) *Context {
-	if updateInterval == 0 {
-		updateInterval = time.Second
-	}
 	c := &Context{
 		ctxt:           ctxt,
 		updateInterval: updateInterval,
@@ -47,11 +48,39 @@ func (c *Context) GOPATH() string {
 }
 
 func (c *Context) SetGoRoot(s string) {
-	c.doUpdate(s, c.GOPATH())
+	if s := clean(s); fs.IsDir(s) {
+		c.doUpdate(s, c.GOPATH())
+	}
 }
 
 func (c *Context) SetGoPath(s string) {
-	c.doUpdate(c.GOROOT(), s)
+	if s := clean(s); fs.IsDir(s) {
+		c.doUpdate(c.GOROOT(), s)
+	}
+}
+
+// PkgTargetRoot, returns the package directory and package .a file for the
+// Go package named by the import path and the current context.
+//
+// See: go/build/build.go Import() for more information.
+func (c *Context) PkgTargetRoot(path string) (pkgRoot string, pkgA string, err error) {
+	ctxt := c.Context()
+	suffix := ctxt.InstallSuffix
+	if suffix != "" {
+		suffix = "_" + suffix
+	}
+	switch ctxt.Compiler {
+	case "gccgo":
+		pkgRoot = "pkg/gccgo_" + ctxt.GOOS + "_" + ctxt.GOARCH + suffix
+		dir, elem := pathpkg.Split(path)
+		pkgA = pkgRoot + "/" + dir + "lib" + elem + ".a"
+	case "gc":
+		pkgRoot = "pkg/" + ctxt.GOOS + "_" + ctxt.GOARCH + suffix
+		pkgA = pkgRoot + "/" + path + ".a"
+	default:
+		err = fmt.Errorf("pkg: unknown compiler %q", ctxt.Compiler)
+	}
+	return pkgRoot, pkgA, err
 }
 
 func (c *Context) MatchFile(dir, name string) bool {
@@ -65,15 +94,18 @@ func (c *Context) Update() {
 	}
 }
 
-func (c *Context) outdated() bool {
+func (c *Context) outdated() (ok bool) {
 	c.mu.RLock()
-	update := time.Since(c.lastUpdate) >= c.updateInterval
+	if c.updateInterval > 0 {
+		ok = time.Since(c.lastUpdate) >= c.updateInterval
+	}
 	c.mu.RUnlock()
-	return update
+	return ok
 }
 
 func (c *Context) doUpdate(root, path string) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.lastUpdate = time.Now()
 	switch {
 	case c.ctxt == nil:
@@ -91,7 +123,6 @@ func (c *Context) doUpdate(root, path string) {
 			c.srcDirs = c.ctxt.SrcDirs()
 		}
 	}
-	c.mu.Unlock()
 }
 
 func (c *Context) initDefault() {
