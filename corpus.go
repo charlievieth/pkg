@@ -3,16 +3,8 @@ package pkg
 import (
 	"log"
 	"os"
-	"path/filepath"
-	"sort"
 	"sync"
 	"time"
-)
-
-// WARN:
-var (
-	_ = filepath.ListSeparator
-	_ = sort.SearchInts([]int{1}, 1)
 )
 
 type Corpus struct {
@@ -24,7 +16,6 @@ type Corpus struct {
 	MaxDepth int
 	mu       sync.RWMutex
 
-	PackageMode   ImportMode
 	IndexFileInfo bool
 	// WARN: New
 	IndexEnabled bool
@@ -72,13 +63,12 @@ func (c *Corpus) notify(e Eventer) {
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?
-func NewCorpus(mode ImportMode) *Corpus {
+func NewCorpus() *Corpus {
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	c := &Corpus{
 		ctxt:          NewContext(nil, 0),
 		dirs:          make(map[string]*Directory),
 		MaxDepth:      defaultMaxDepth,
-		PackageMode:   mode,
 		IndexFileInfo: true,
 		IndexEnabled:  true,
 		IndexGoCode:   true,

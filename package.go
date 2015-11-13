@@ -120,40 +120,6 @@ func (m FileMap) first() File {
 	return File{}
 }
 
-// An ImportMode controls how Packages are imported.
-type ImportMode int
-
-const (
-	// If FindPackageName is set,
-	FindPackageName ImportMode = 1 << iota
-
-	// If IndexPackage is set, Package files are indexed
-	FindPackageFiles
-)
-
-// CEV: This is pretty ugly but unlike a map allows ImportModes to be marshaled
-// in a set order.
-var importModeStr = []struct {
-	m ImportMode
-	s string
-}{
-	{FindPackageName, "+FindPackageName"},
-	{FindPackageFiles, "+FindPackageFiles"},
-}
-
-func (i ImportMode) String() string {
-	var b []byte
-	for _, m := range importModeStr {
-		if i&m.m != 0 {
-			b = append(b, m.s...)
-		}
-	}
-	if len(b) != 0 {
-		return string(b[1:])
-	}
-	return "Invalid"
-}
-
 // A GoFileType describes a Go file in a package directory.
 type GoFileType int
 
@@ -190,24 +156,8 @@ type Package struct {
 	Goroot     bool                   // Package found in Go root
 	Installed  bool                   // True if the package or command is installed
 	Info       os.FileInfo            // File info as of last update
-	mode       ImportMode             // ImportMode used when created
 	files      map[GoFileType]FileMap // Go source files indexed by type
 	err        error                  // Either NoGoError of MultiplePackageError
-}
-
-// FindPackageName, returns if the FindPackageName ImportMode is set.
-func (p *Package) FindPackageName() bool {
-	return p.mode&FindPackageName != 0
-}
-
-// FindPackageFiles, returns if the FindPackageFiles ImportMode is set.
-func (p *Package) FindPackageFiles() bool {
-	return p.mode&FindPackageFiles != 0
-}
-
-// Mode, returns the ImportMode used to parse the package.
-func (p *Package) Mode() ImportMode {
-	return p.mode
 }
 
 // Error, returns either NoGoError or MultiplePackageError.
