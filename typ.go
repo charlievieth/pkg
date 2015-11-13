@@ -13,7 +13,7 @@ func init() {
 	}
 }
 
-type TypKind uint64
+type TypKind uint32
 
 const (
 	InvalidDecl TypKind = iota
@@ -50,13 +50,15 @@ var typKindMap = map[string]TypKind{
 
 func (t TypKind) String() string {
 	// Make sure lastKind is up to date.
-	if t < lastKind {
+	if t.IsValid() {
 		return typKindStr[t]
 	}
 	return typKindStr[InvalidDecl]
 }
 
 func (t TypKind) Name() string { return t.String() }
+
+func (t TypKind) IsValid() bool { return t < lastKind }
 
 func (t TypKind) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil

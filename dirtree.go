@@ -11,21 +11,27 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type treeBuilder struct {
 	c        *Corpus
 	maxDepth int
+	seen     map[string]bool // dirs seen - to prevent loops
+	mu       sync.Mutex      // mutext for seen map
 }
 
 const defaultMaxDepth = 512
 
-func newTreeBuilder(c *Corpus) *treeBuilder {
-	depth := c.MaxDepth
-	if depth <= 0 {
-		depth = 1e6
+func newTreeBuilder(c *Corpus, maxDepth int) *treeBuilder {
+	if maxDepth <= 0 {
+		maxDepth = 1e6
 	}
-	return &treeBuilder{c: c, maxDepth: depth}
+	return &treeBuilder{
+		c:        c,
+		maxDepth: maxDepth,
+		seen:     make(map[string]bool),
+	}
 }
 
 // Conventional name for directories containing test data.
@@ -54,9 +60,8 @@ func (c *Corpus) newDirectory(root string, maxDepth int) (*Directory, error) {
 	if !fi.IsDir() {
 		return nil, errors.New("pkg: invalid directory root: " + root)
 	}
-	fset := token.NewFileSet()
-	t := &treeBuilder{c: c, maxDepth: maxDepth}
-	dir := t.newDirTree(fset, root, filepath.Base(root), 0, false)
+	t := newTreeBuilder(c, maxDepth)
+	dir := t.newDirTree(token.NewFileSet(), root, fi.Name(), 0, false)
 	return dir, nil
 }
 
@@ -71,14 +76,27 @@ func (c *Corpus) updateDirectory(dir *Directory, maxDepth int) (*Directory, erro
 	if !fi.IsDir() {
 		return nil, errors.New("pkg: invalid directory root: " + dir.Path)
 	}
-	fset := token.NewFileSet()
-	t := &treeBuilder{c: c, maxDepth: maxDepth}
-	return t.updateDirTree(dir, fset), nil
+	t := newTreeBuilder(c, maxDepth)
+	return t.updateDirTree(dir, token.NewFileSet()), nil
 }
 
+// Seen, reports if the path has been seen.
+func (t *treeBuilder) Seen(path string) (ok bool) {
+	t.mu.Lock()
+	if ok = t.seen[path]; !ok {
+		t.seen[path] = true
+	}
+	t.mu.Unlock()
+	return ok
+}
+
+// newDirTree, creates a new package directory tree anchored at root.
 func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	depth int, internal bool) *Directory {
 
+	if t.Seen(path) {
+		return nil
+	}
 	if t.maxDepth != 0 && depth >= t.maxDepth {
 		return &Directory{
 			Depth: depth,
@@ -139,7 +157,9 @@ func (t *treeBuilder) newDirTree(fset *token.FileSet, path, name string,
 	return dir
 }
 
-func (t *treeBuilder) newSubDirTree(dir *Directory, fset *token.FileSet, name string) chan *Directory {
+func (t *treeBuilder) newSubDirTree(dir *Directory, fset *token.FileSet,
+	name string) chan *Directory {
+
 	ch := make(chan *Directory, 1)
 	go func() {
 		path := filepath.Join(dir.Path, name)
@@ -150,6 +170,9 @@ func (t *treeBuilder) newSubDirTree(dir *Directory, fset *token.FileSet, name st
 
 func (t *treeBuilder) updateDirTree(dir *Directory, fset *token.FileSet) *Directory {
 
+	if t.Seen(dir.Path) {
+		return nil
+	}
 	if t.maxDepth != 0 && dir.Depth >= t.maxDepth {
 		return dir
 	}

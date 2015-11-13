@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"go/token"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -67,7 +66,7 @@ func (c *Corpus) initDirTree() error {
 
 // updateDirTree, updates the Directory tree at root.  If no Directory tree is
 // currently stored at root - one is created.  An error is returned if root is
-// not a directory or there was an error statting it.
+// not a directory.
 func (c *Corpus) updateDirTree(root string) error {
 	if c.dirs == nil {
 		c.dirs = make(map[string]*Directory)
@@ -97,19 +96,11 @@ func (c *Corpus) Update() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	t := newTreeBuilder(c)
 	seen := make(map[string]bool)
 	for _, path := range c.ctxt.SrcDirs() {
 		seen[path] = true
-		fset := token.NewFileSet()
-		if _, ok := c.dirs[path]; ok {
-			// WARN WARN WARN WARN REMOVE
-			if c.dirs[path] == nil {
-				panic(path)
-			}
-			c.dirs[path] = t.updateDirTree(c.dirs[path], fset)
-		} else {
-			c.dirs[path] = t.newDirTree(fset, path, filepath.Base(path), 0, false)
+		if err := c.updateDirTree(path); err != nil {
+			// TODO:
 		}
 	}
 
