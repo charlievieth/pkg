@@ -16,7 +16,8 @@ const (
 	DefaultMaxOpenDirs  = 50
 )
 
-// An FS provides gated access to the file system.
+// An FS provides gated access to the file system.  If maxOpenFiles or
+// maxOpenDirs are not set the defaults are used.
 type FS struct {
 	maxOpenFiles int // max number of open files
 	maxOpenDirs  int // max number of open directories
@@ -26,8 +27,11 @@ type FS struct {
 
 // New, returns a new FS with maxOpenFiles and maxOpenDirs.
 //
-// If maxOpenFiles or maxOpenDirs are less than or equal to zero, the number
-// of simultaneously open files or directories is not limited.
+// If maxOpenFiles or maxOpenDirs are less than zero, the number of
+// simultaneously open files or directories is not limited.
+//
+// If maxOpenFiles or maxOpenDirs are equal to zero, the default
+// max open files and directories are used.
 func New(maxOpenFiles, maxOpenDirs int) *FS {
 	return &FS{
 		maxOpenFiles: maxOpenFiles,
@@ -39,16 +43,22 @@ func New(maxOpenFiles, maxOpenDirs int) *FS {
 
 // lazyInit, lazy initialization of FS.
 func (fs *FS) lazyInit() {
-	if fs.fsOpenGate == nil && fs.maxOpenFiles > 0 {
+	if fs.fsOpenGate == nil && fs.maxOpenFiles > -1 {
+		if fs.maxOpenFiles == 0 {
+			fs.maxOpenFiles = DefaultMaxOpenFiles
+		}
 		fs.fsOpenGate = make(chan struct{}, fs.maxOpenFiles)
 	}
-	if fs.fsDirGate == nil && fs.maxOpenDirs > 0 {
+	if fs.fsDirGate == nil && fs.maxOpenDirs > -1 {
+		if fs.maxOpenDirs == 0 {
+			fs.maxOpenDirs = DefaultMaxOpenDirs
+		}
 		fs.fsDirGate = make(chan struct{}, fs.maxOpenDirs)
 	}
 }
 
 func (fs *FS) openFileGate() {
-	if fs.maxOpenFiles > 0 {
+	if fs.maxOpenFiles > -1 {
 		fs.lazyInit()
 		fs.fsOpenGate <- struct{}{}
 	}
@@ -61,7 +71,7 @@ func (fs *FS) closeFileGate() {
 }
 
 func (fs *FS) openDirGate() {
-	if fs.maxOpenDirs > 0 {
+	if fs.maxOpenDirs > -1 {
 		fs.lazyInit()
 		fs.fsDirGate <- struct{}{}
 	}
