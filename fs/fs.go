@@ -1,95 +1,60 @@
-// Package fs provides file-system utilities.
+// Package fs provides file-system utilities and an implementation of
+// os.FileInfo that implements the GobEncode, GobDecode, MarshalJSON and
+// UnmarshalJSON interfaces.
 package fs
 
 import (
-	"bytes"
-	"encoding/gob"
 	"io/ioutil"
 	"os"
 	pathpkg "path"
 	"sort"
-	"time"
 )
+
+type FS struct {
+	maxOpenFiles int
+	maxOpenDirs  int
+	fsOpenGate   chan struct{}
+	fsDirGate    chan struct{}
+}
+
+func New(maxOpenFiles, maxOpenDirs int) *FS {
+	return &FS{
+		maxOpenFiles: maxOpenFiles,
+		maxOpenDirs:  maxOpenDirs,
+		fsOpenGate:   make(chan struct{}, maxOpenFiles),
+		fsDirGate:    make(chan struct{}, maxOpenDirs),
+	}
+}
+
+func (f *FS) lazyInit() {
+	if f.fsOpenGate == nil {
+		if f.maxOpenFiles <= 0 {
+			f.maxOpenFiles = DefaultMaxOpenFiles
+		}
+		if f.maxOpenDirs <= 0 {
+			f.maxOpenDirs = DefaultMaxOpenDirs
+		}
+		f.fsOpenGate = make(chan struct{}, f.maxOpenFiles)
+		f.fsDirGate = make(chan struct{}, f.maxOpenDirs)
+	}
+}
 
 // Limit the number of simultaneously open files and directories.
 const (
-	maxOpenFiles = 200
-	maxOpenDirs  = 50
+	DefaultMaxOpenFiles = 200
+	DefaultMaxOpenDirs  = 50
 )
 
-var fsOpenGate = make(chan struct{}, maxOpenFiles)
-var fsDirGate = make(chan struct{}, maxOpenDirs)
+var fsOpenGate = make(chan struct{}, DefaultMaxOpenFiles)
+var fsDirGate = make(chan struct{}, DefaultMaxOpenDirs)
+var std = New(DefaultMaxOpenFiles, DefaultMaxOpenDirs)
 
-func init() {
-	gob.Register(&fileStat{})
-}
-
-type fileStat struct {
-	name    string
-	size    int64
-	mode    os.FileMode
-	modTime time.Time
-	isDir   bool
-}
-
-func newFileStat(fi os.FileInfo) *fileStat {
-	if fi == nil {
-		return nil
-	}
-	return &fileStat{
-		name:    fi.Name(),
-		size:    fi.Size(),
-		mode:    fi.Mode(),
-		modTime: fi.ModTime(),
-		isDir:   fi.IsDir(),
-	}
-}
-
-func (fs *fileStat) Name() string       { return fs.name }
-func (fs *fileStat) Size() int64        { return fs.size }
-func (fs *fileStat) Mode() os.FileMode  { return fs.mode }
-func (fs *fileStat) ModTime() time.Time { return fs.modTime }
-func (fs *fileStat) IsDir() bool        { return fs.isDir }
-func (fs *fileStat) Sys() interface{}   { return nil }
-
-func (f *fileStat) GobDecode(b []byte) error {
-	var v struct {
-		Name    string
-		Size    int64
-		Mode    os.FileMode
-		ModTime time.Time
-		IsDir   bool
-	}
-	if err := gob.NewDecoder(bytes.NewReader(b)).Decode(&v); err != nil {
-		return err
-	}
-	f.name = v.Name
-	f.size = v.Size
-	f.mode = v.Mode
-	f.modTime = v.ModTime
-	f.isDir = v.IsDir
-	return nil
-}
-
-func (f *fileStat) GobEncode() ([]byte, error) {
-	v := struct {
-		Name    string
-		Size    int64
-		Mode    os.FileMode
-		ModTime time.Time
-		IsDir   bool
-	}{
-		f.name,
-		f.size,
-		f.mode,
-		f.modTime,
-		f.isDir,
-	}
-	buf := new(bytes.Buffer)
-	if err := gob.NewEncoder(buf).Encode(v); err != nil {
+func (fs *FS) Lstat(name string) (os.FileInfo, error) {
+	fi, err := os.Lstat(name)
+	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return newFileStat(fi), nil
 }
 
 func Lstat(name string) (os.FileInfo, error) {
@@ -114,6 +79,8 @@ func ReadFile(path string) ([]byte, error) {
 	return ioutil.ReadFile(path)
 }
 
+// Readdirnames reads and returns a slice of names from the directory f, in
+// sorted order.
 func Readdirnames(path string) ([]string, error) {
 	fsDirGate <- struct{}{}
 	defer func() { <-fsDirGate }()
@@ -131,6 +98,8 @@ func Readdirnames(path string) ([]string, error) {
 	return names, nil
 }
 
+// Readdir reads the contents of the directory associated with file and returns
+// a slice of FileInfo values as would be returned by Lstat, in directory order.
 func Readdir(path string) ([]os.FileInfo, error) {
 	fsDirGate <- struct{}{}
 	defer func() { <-fsDirGate }()
@@ -188,6 +157,8 @@ func StatFunc(path string, fn FilterFunc) ([]os.FileInfo, error) {
 	return list, err
 }
 
+// SameFile, returns if os.FileInfo fi1 and fi2 have the same: name, size,
+// modtime, directory mode or are both nil.
 func SameFile(fi1, fi2 os.FileInfo) bool {
 	if fi1 == nil {
 		if fi2 == nil {
@@ -201,16 +172,19 @@ func SameFile(fi1, fi2 os.FileInfo) bool {
 		fi1.IsDir() == fi2.IsDir()
 }
 
+// IsDir, returns if path name is a directory.
 func IsDir(name string) bool {
 	fs, err := Stat(name)
 	return err == nil && fs.IsDir()
 }
 
+// IsDir, returns if path name is a file.
 func IsFile(name string) bool {
 	fs, err := Stat(name)
 	return err == nil && !fs.IsDir()
 }
 
+// IsPathErr, returns if error err is a *os.PathError.
 func IsPathErr(err error) bool {
 	_, ok := err.(*os.PathError)
 	return ok
