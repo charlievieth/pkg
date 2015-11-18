@@ -434,7 +434,7 @@ func (x *PackageIndex) updatePkg(dir string, fi os.FileInfo) (*Package, error) {
 	p, pkgFound := x.lookupPath(dir)
 	if p == nil || !pkgFound || !fs.SameFile(p.Info, fi) {
 		// Stat only Go files.
-		files, err := fs.StatFunc(dir, fs.FilterGo)
+		files, err := fs.ReaddirFunc(dir, fs.FilterGo)
 		if err != nil {
 			return exitErr(err)
 		}
