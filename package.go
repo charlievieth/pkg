@@ -354,9 +354,11 @@ func (x *PackageIndex) remove(root, path string) {
 		return
 	}
 	x.mu.Lock()
-	if _, ok := x.packages[root]; ok {
-		delete(x.packages[root], path)
-		x.notify(DeleteEvent, path)
+	if m := x.packages[root]; m != nil {
+		if _, ok := m[path]; ok {
+			delete(x.packages[root], path)
+			x.notify(DeleteEvent, path)
+		}
 	}
 	x.mu.Unlock()
 }
@@ -607,8 +609,17 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 	p.Installed = x.isInstalled(p)
 	x.addPackage(p)
 
+	// Send notification.
+	switch {
+	case !pkgFound:
+		x.notify(CreateEvent, p.Dir)
+	case pkgFound && updateAst:
+		x.notify(UpdateEvent, p.Dir)
+	}
+
 	// Index package idents
 	if x.c.IndexGoCode && updateAst {
+		// WARN: Make sure we parsed all pkg files!
 		x.c.idents.indexPackageFiles(p, fset, astFiles)
 	}
 	return p, nil

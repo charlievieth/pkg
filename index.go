@@ -2,12 +2,12 @@ package pkg
 
 import (
 	"fmt"
-	"git.vieth.io/pkg/fs"
 	"go/ast"
 	"go/token"
 	"strings"
 	"sync"
 
+	"git.vieth.io/pkg/fs"
 	"git.vieth.io/pkg/util"
 )
 
@@ -353,6 +353,7 @@ func (x *astIndexer) index() error {
 }
 
 func (x *astIndexer) indexFiles(files map[string]*ast.File) error {
+	// TODO: Make sure we have all pkg files.
 	for _, af := range files {
 		x.Visit(af)
 	}

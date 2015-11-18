@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -37,8 +38,9 @@ func NewCorpus() *Corpus {
 		IndexGoCode:        true,
 		LogEvents:          false,
 		log:                logger,
-		eventCh:            make(chan Eventer, 200),
+		eventCh:            make(chan Eventer, 100),
 		refreshIndexSignal: make(chan bool, 1), // buffer
+		IndexInterval:      time.Second * 3,
 	}
 	return c
 }
@@ -59,11 +61,12 @@ func (c *Corpus) notify(e Eventer) {
 	}
 	c.lazyInitEventChan()
 	select {
+	case <-c.stop:
+		// Don't send
 	case c.eventCh <- e:
-	case <-time.After(time.Millisecond * 100):
-		if c.LogEvents {
-			c.log.Println("Corpus: sending event timed out")
-		}
+		// Ok
+	case <-time.After(time.Second):
+		c.log.Println("\033[31mCorpus: sending event timed out\033[0m")
 	}
 }
 
@@ -73,6 +76,9 @@ func (c *Corpus) eventStream() {
 	for {
 		select {
 		case e := <-c.eventCh:
+			if !c.LogEvents {
+				break
+			}
 			c.log.Println(e.String())
 			if err := e.Callback(c); err != nil {
 				// TODO: Add more info to event
@@ -94,43 +100,35 @@ func (c *Corpus) refreshIndex() {
 func (c *Corpus) refreshIndexLoop() {
 	c.wg.Add(1)
 	defer c.wg.Done()
-	if c.IndexInterval == 0 {
-		c.IndexInterval = time.Second * 5
-	}
+	lastUpdate := time.Now()
 	for {
 		select {
+		case <-c.stop:
+			return
 		case <-c.refreshIndexSignal:
-			c.updateIndex()
-			time.Sleep(c.IndexInterval)
-		case <-c.stop:
-			return
+			if time.Since(lastUpdate) >= time.Second {
+				start := time.Now()
+				c.updateIndex()
+				e := Event{
+					typ: UpdateEvent,
+					msg: fmt.Sprintf("Index: \033[33mupdated\033[0m in %s", time.Since(start)),
+				}
+				c.notify(&e)
+				lastUpdate = time.Now()
+			}
+		case <-time.After(c.IndexInterval):
+			if time.Since(lastUpdate) >= time.Second {
+				start := time.Now()
+				c.updateIndex()
+				e := Event{
+					typ: UpdateEvent,
+					msg: fmt.Sprintf("Index: \033[33mupdated\033[0m in %s", time.Since(start)),
+				}
+				c.notify(&e)
+				lastUpdate = time.Now()
+			}
 		}
 	}
-}
-
-func (c *Corpus) refreshIndexTicker() {
-	c.wg.Add(1)
-	defer c.wg.Done()
-	t := time.NewTicker(c.IndexInterval)
-	for {
-		select {
-		case <-t.C:
-			c.refreshIndex()
-		case d := <-c.refreshInterval:
-			d = c.refreshMinDuration(d)
-			t = time.NewTicker(d)
-		case <-c.stop:
-			return
-		}
-	}
-}
-
-func (c *Corpus) refreshMinDuration(d time.Duration) time.Duration {
-	const min = time.Millisecond * 250
-	if d < min {
-		d = min
-	}
-	return d
 }
 
 func (c *Corpus) updateIndex() {
@@ -146,6 +144,8 @@ func (c *Corpus) updateIndex() {
 		}
 		if d != nil {
 			c.dirs[root] = d
+		} else {
+			delete(c.dirs, root)
 		}
 	}
 	// Remove missing directories
@@ -157,6 +157,8 @@ func (c *Corpus) updateIndex() {
 }
 
 func (c *Corpus) Init() error {
+	c.LogEvents = false
+	go c.eventStream()
 	if c.packages == nil {
 		c.packages = newPackageIndex(c)
 	}
@@ -166,9 +168,22 @@ func (c *Corpus) Init() error {
 	if err := c.initDirTree(); err != nil {
 		return err
 	}
-	go c.eventStream()
+	c.LogEvents = true
 	go c.refreshIndexLoop()
 	return nil
+}
+
+func (c *Corpus) Stop() {
+	select {
+	case <-c.stop:
+		c.log.Println("Corpus: index not running!")
+	default:
+		c.log.Println("Corpus: stopping index.")
+	}
+	t := time.Now()
+	close(c.stop)
+	c.wg.Wait()
+	c.log.Printf("Corpus: shutdown complete, elapsed time: %s", time.Since(t))
 }
 
 // WARN

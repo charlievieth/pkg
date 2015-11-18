@@ -35,9 +35,9 @@ func (e EventType) verb() string {
 }
 
 var eventTypeColor = [...]string{
-	"\033[32created\033[0m", // green
-	"\033[33updated\033[0m", // yellow
-	"\033[31deleted\033[0m", // red
+	"\033[32m" + "created" + "\033[0m", // green
+	"\033[33m" + "updated" + "\033[0m", // yellow
+	"\033[31m" + "deleted" + "\033[0m", // red
 }
 
 func (e EventType) color() string {

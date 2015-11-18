@@ -140,6 +140,12 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 	if !dir.HasPkg && len(dirs) == 0 {
 		return exitErr(dir)
 	}
+	// Check for removed sub-directories.
+	for name, d := range dir.Dirs {
+		if _, ok := dirs[name]; !ok {
+			t.removePackage(d)
+		}
+	}
 	// Do not assign until we know there are no errors.
 	// Removing sub-directory packages requires the old
 	// dirs map.
@@ -223,9 +229,10 @@ func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
 
 // removePackage, removes any Packages rooted at dir.
 func (t *treeBuilder) removePackage(dir *Directory) {
-	if dir != nil {
+	if dir == nil {
 		return
 	}
+	t.notify(DeleteEvent, dir.Path)
 	if dir.HasPkg {
 		t.x.removePath(dir.Path)
 	}
