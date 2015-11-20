@@ -4,6 +4,7 @@
 package fs
 
 import (
+	"io"
 	"io/ioutil"
 	"os"
 	pathpkg "path"
@@ -110,6 +111,33 @@ func (fs *FS) ReadFile(path string) ([]byte, error) {
 	fs.openFileGate()
 	defer fs.closeFileGate()
 	return ioutil.ReadFile(path)
+}
+
+// A fileCloser
+type fileCloser struct {
+	f  *os.File
+	fs *FS
+}
+
+// Read, reads from the underlying os.File.
+func (f *fileCloser) Read(p []byte) (n int, err error) {
+	return f.Read(p)
+}
+
+// Close, closes the underlying os.File and file gate.
+func (f *fileCloser) Close() error {
+	f.fs.closeFileGate()
+	return f.Close()
+}
+
+// OpenFile, returns the file named by path for reading.
+func (fs *FS) OpenFile(path string) (io.ReadCloser, error) {
+	fs.openFileGate()
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return &fileCloser{f: f, fs: fs}, nil
 }
 
 // Readdirnames reads and returns a slice of names from directory path, in
@@ -231,6 +259,11 @@ func Stat(name string) (os.FileInfo, error) {
 // returns the contents.
 func ReadFile(path string) ([]byte, error) {
 	return std.ReadFile(path)
+}
+
+// OpenFile, returns the file named by path for reading using the standard FS.
+func OpenFile(path string) (io.ReadCloser, error) {
+	return std.OpenFile(path)
 }
 
 // Readdirnames, uses the default FS to read and return a slice of names from
