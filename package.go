@@ -196,7 +196,7 @@ func (p *Package) LookupFile(name string) (File, bool) {
 func (p *Package) fileLen(typ GoFileType) int {
 	n := 0
 	for t, m := range p.files {
-		if typ < 0 || t&typ == typ {
+		if typ < 0 || t&typ != 0 {
 			n += len(m)
 		}
 	}
@@ -208,7 +208,7 @@ func (p *Package) fileLen(typ GoFileType) int {
 func (p *Package) Files(typ GoFileType) []File {
 	s := make([]File, 0, p.fileLen(typ))
 	for t, m := range p.files {
-		if typ < 0 || t&typ == typ {
+		if typ < 0 || t&typ != 0 {
 			s = m.appendFiles(s)
 		}
 	}
@@ -221,7 +221,7 @@ func (p *Package) Files(typ GoFileType) []File {
 func (p *Package) FileNames(typ GoFileType) []string {
 	s := make([]string, 0, p.fileLen(typ))
 	for t, m := range p.files {
-		if typ < 0 || t&typ == typ {
+		if typ < 0 || t&typ != 0 {
 			s = m.appendFileNames(s)
 		}
 	}
@@ -234,7 +234,7 @@ func (p *Package) FileNames(typ GoFileType) []string {
 func (p *Package) FilePaths(typ GoFileType) []string {
 	s := make([]string, 0, p.fileLen(typ))
 	for t, m := range p.files {
-		if typ < 0 || t&typ == typ {
+		if typ < 0 || t&typ != 0 {
 			s = m.appendFilePaths(s)
 		}
 	}
@@ -315,7 +315,7 @@ func (p *PackageIndex) intern(s string) string {
 func (x *PackageIndex) matchFile(p *Package, name string) bool {
 	if x.c == nil || x.c.ctxt == nil {
 		// Internal error
-		panic("PackageIndex: internal error (matchFile)")
+		panic("pkg: internal error (PackageIndex.matchFile)")
 	}
 	return x.c.ctxt.MatchFile(p.Dir, name)
 }
@@ -421,6 +421,27 @@ func (x *PackageIndex) UpdatePackage(p *Package) (*Package, error) {
 		return nil, err
 	}
 	return x.updatePkg(p.Dir, fi)
+}
+
+func (x *PackageIndex) InvalidateContext(matchFiles bool) {
+	for _, m := range x.packages {
+		for _, p := range m {
+			x.updatePkgContext(p, matchFiles)
+		}
+	}
+}
+
+func (x *PackageIndex) updatePkgContext(p *Package, matchFiles bool) {
+	if matchFiles {
+		for _, f := range p.Files(GoFile | IgnoredGoFile) {
+			if x.matchFile(p, f.Name) {
+				p.addFile(GoFile, f)
+			} else {
+				p.addFile(IgnoredGoFile, f)
+			}
+		}
+	}
+	p.Installed = x.isInstalled(p)
 }
 
 func (x *PackageIndex) updatePkg(dir string, fi os.FileInfo) (*Package, error) {

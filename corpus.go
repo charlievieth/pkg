@@ -19,12 +19,11 @@ type Corpus struct {
 	idents             *Index
 	packages           *PackageIndex
 	dirs               map[string]*Directory
-	eventCh            chan Eventer
-	mu                 sync.RWMutex
 	lastUpdate         time.Time
+	eventCh            chan Eventer
 	refreshIndexSignal chan bool
 	stop               chan bool
-	refreshInterval    chan time.Duration // use to change refresh interval
+	mu                 sync.RWMutex
 	wg                 sync.WaitGroup
 }
 
@@ -61,10 +60,10 @@ func (c *Corpus) notify(e Eventer) {
 	}
 	c.lazyInitEventChan()
 	select {
-	case <-c.stop:
-		// Don't send
 	case c.eventCh <- e:
 		// Ok
+	case <-c.stop:
+		// Don't send
 	case <-time.After(time.Second):
 		c.log.Println("\033[31mCorpus: sending event timed out\033[0m")
 	}
@@ -103,8 +102,6 @@ func (c *Corpus) refreshIndexLoop() {
 	lastUpdate := time.Now()
 	for {
 		select {
-		case <-c.stop:
-			return
 		case <-c.refreshIndexSignal:
 			if time.Since(lastUpdate) >= time.Second {
 				start := time.Now()
@@ -127,6 +124,8 @@ func (c *Corpus) refreshIndexLoop() {
 				c.notify(&e)
 				lastUpdate = time.Now()
 			}
+		case <-c.stop:
+			return
 		}
 	}
 }
