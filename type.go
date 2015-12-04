@@ -2,7 +2,7 @@ package pkg
 
 import (
 	"encoding/json"
-
+	"errors"
 	"fmt"
 )
 
@@ -13,6 +13,7 @@ func init() {
 	}
 }
 
+// TypKind describes the kind of a Go identifier.
 type TypKind uint32
 
 const (
@@ -48,6 +49,7 @@ var typKindMap = map[string]TypKind{
 	"InterfaceDecl": InterfaceDecl,
 }
 
+// String, returns the string representation of t.
 func (t TypKind) String() string {
 	// Make sure lastKind is up to date.
 	if t.IsValid() {
@@ -56,15 +58,17 @@ func (t TypKind) String() string {
 	return typKindStr[InvalidDecl]
 }
 
+// Name, returns the name (string representation) of t.
 func (t TypKind) Name() string { return t.String() }
 
+// IsValid, returns if t is a valid TypKind.
 func (t TypKind) IsValid() bool { return t < lastKind }
 
 func (t TypKind) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil
 }
 
-func (t *TypKind) UnmarshalJSON(b []byte) error {
+func (t *TypKind) UnmarshalJSON(b []byte) (err error) {
 	i, j := 0, len(b)
 	if b[i] == '"' {
 		i++
@@ -72,10 +76,23 @@ func (t *TypKind) UnmarshalJSON(b []byte) error {
 	if b[j-1] == '"' {
 		j--
 	}
-	*t = typKindMap[string(b[i:j])]
-	return nil
+	if typ, ok := typKindMap[string(b[i:j])]; ok {
+		*t = typ
+	} else {
+		err = errors.New(`pkg: invalid TypKind "` + string(string(b[i:j])) + `"`)
+	}
+	return err
 }
 
+// A TypeInfo value describes a particular identifier spot in a given file.
+// It encodes three values: the TypeKind, and the file line and offset.
+//
+// The following encoding is used:
+//
+//   bits    64     32    4    1
+//   value     [offset|line|kind]
+//
+// TODO (CEV): Add line offset.
 type TypInfo uint64
 
 func makeTypInfo(kind TypKind, offset, line int) TypInfo {
