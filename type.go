@@ -95,6 +95,7 @@ func (t *TypKind) UnmarshalJSON(b []byte) (err error) {
 // TODO (CEV): Add line offset.
 type TypInfo uint64
 
+// makeTypInfo makes a TypeInfo.
 func makeTypInfo(kind TypKind, offset, line int) TypInfo {
 	x := TypInfo(offset) << 32
 	if int(x>>32) != offset {
@@ -108,9 +109,9 @@ func makeTypInfo(kind TypKind, offset, line int) TypInfo {
 	return x
 }
 
-func (x TypInfo) Kind() TypKind { return TypKind(x & 7) }
-func (x TypInfo) Line() int     { return int(x >> 4 & 0xfffffff) }
-func (x TypInfo) Offset() int   { return int(x >> 32) }
+func (t TypInfo) Kind() TypKind { return TypKind(t & 7) }
+func (t TypInfo) Line() int     { return int(t >> 4 & 0xfffffff) }
+func (t TypInfo) Offset() int   { return int(t >> 32) }
 
 func (t TypInfo) String() string {
 	return fmt.Sprintf("{Kind:%s Offset:%d Line:%d}", t.Kind().String(),
