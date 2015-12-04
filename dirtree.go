@@ -53,29 +53,10 @@ func (t *treeBuilder) seen(path string) (ok bool) {
 	return ok
 }
 
-// indexDir, indexes the package found in directory path and returns the
-// package name and if it has Go source files.
-func (t *treeBuilder) indexDir(path string, fi os.FileInfo,
-	files []os.FileInfo) (pkgName string, hasPkg bool) {
-
-	// TODO: This is ugly and only adds indirection - consider removing.
-	pkg, err := t.x.indexPkg(path, fi, files)
-	if err == nil {
-		pkgName = pkg.Name
-		hasPkg = pkg.isPkgDir()
-	}
-	return
-}
-
-func (t *treeBuilder) updateDir(dir string, fi os.FileInfo) (pkgName string, hasPkg bool) {
-	pkg, _ := t.x.updatePkg(dir, fi)
-	if pkg != nil {
-		pkgName = pkg.Name
-		hasPkg = pkg.isPkgDir()
-	}
-	return
-}
-
+// updateDirTree, updates and returns Directory dir and all sub-directories.
+// If the directory structure changed sub-directories are added and removed,
+// accordingly.  Nil is returned if the path pointed to by dir is no longer
+// a directory or an error was encountered.
 func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 	// exitErr, deletes all Packages rooted at d.
 	exitErr := func(d *Directory) *Directory {
@@ -85,20 +66,34 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 	if t.seen(dir.Path) || isIgnored(dir.Name) {
 		return exitErr(dir)
 	}
+
+	// At or below MaxDepth, just return dir without checking
+	// FileInfo or any sub-directories.
 	if t.maxDepth != 0 && dir.Depth >= t.maxDepth {
 		return dir
 	}
+
 	fi, err := fs.Stat(dir.Path)
 	if err != nil || !fi.IsDir() {
-		t.removePackage(dir)
 		return exitErr(dir)
 	}
-	same := fs.SameFile(dir.Info, fi)
+	// noChange, means the directory structure should be the same.
+	noChange := fs.SameFile(dir.Info, fi)
 	dir.Info = fi
+
+	// If there is no change to the directory, simply update any
+	// existing sub-directories.
+	//
+	// Otherwise, read the directory dir and update, add and remove
+	// sub-directories.
 	var dirchs []chan *Directory
-	if same {
+	if noChange {
 		if dir.HasPkg {
-			dir.PkgName, dir.HasPkg = t.updateDir(dir.Path, fi)
+			pkg, _ := t.x.updatePkg(dir.Path, dir.Info)
+			if pkg != nil {
+				dir.PkgName = pkg.Name
+				dir.HasPkg = pkg.isPkgDir()
+			}
 		}
 		for _, d := range dir.Dirs {
 			ch := make(chan *Directory, 1)
@@ -112,16 +107,23 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 		if err != nil {
 			return exitErr(dir)
 		}
-		dir.PkgName, dir.HasPkg = t.indexDir(dir.Path, fi, list)
+		// Re-Index directory
+		pkg, err := t.x.indexPkg(dir.Path, dir.Info, list)
+		if err == nil {
+			dir.PkgName = pkg.Name
+			dir.HasPkg = pkg.isPkgDir()
+		}
 		for _, fi := range list {
 			if isPkgDir(fi) {
 				ch := make(chan *Directory, 1)
 				dirchs = append(dirchs, ch)
 				if d := dir.Dirs[fi.Name()]; d != nil {
+					// Update existing sub-directory
 					go func(d *Directory) {
 						ch <- t.updateDirTree(d)
 					}(d)
 				} else {
+					// Add new sub-directory
 					go func(fi os.FileInfo) {
 						path := pathpkg.Join(dir.Path, fi.Name())
 						ch <- t.newDirTree(path, fi, dir.Depth, dir.Internal)
@@ -185,7 +187,14 @@ func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
 
 	// Index package.  To reduce strain on the filesystem
 	// index before starting the sub-directory goroutines.
-	pkgName, hasPkg := t.indexDir(path, info, list)
+	var (
+		pkgName string
+		hasPkg  bool
+	)
+	if pkg, err := t.x.indexPkg(path, info, list); err == nil {
+		pkgName = pkg.Name
+		hasPkg = pkg.isPkgDir()
+	}
 
 	// Start goroutings to visit sub-directories
 	var dirchs []chan *Directory
