@@ -132,6 +132,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 			}
 		}
 	}
+
 	// Create sub-directory tree
 	dirs := make(map[string]*Directory)
 	for _, ch := range dirchs {
@@ -139,15 +140,22 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 			dirs[d.Name] = d
 		}
 	}
+
+	// No package or sub-dirs, remove.
 	if !dir.HasPkg && len(dirs) == 0 {
 		return exitErr(dir)
 	}
-	// Check for removed sub-directories.
+
+	// Remove any packages associated with missing
+	// sub-directories.
+	//
+	// TODO: This may be redundant.
 	for name, d := range dir.Dirs {
 		if _, ok := dirs[name]; !ok {
 			t.removePackage(d)
 		}
 	}
+
 	// Do not assign until we know there are no errors.
 	// Removing sub-directory packages requires the old
 	// dirs map.
