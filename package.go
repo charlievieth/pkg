@@ -102,7 +102,7 @@ func (m FileMap) appendFilePaths(s []string) []string {
 	return s
 }
 
-// removeNotSeen, removes files not found in seen from the FileMap.
+// removeNotSeen, removes files not present in seen from the FileMap.
 func (m FileMap) removeNotSeen(seen []string) {
 	for name, file := range m {
 		if sort.SearchStrings(seen, file.Name) == len(seen) {
@@ -334,7 +334,7 @@ func (x *PackageIndex) addPackage(p *Package) {
 
 func (x *PackageIndex) lookup(root, path string) (pkg *Package, ok bool) {
 	x.mu.RLock()
-	if x.packages != nil {
+	if x.packages != nil && x.packages[root] != nil {
 		pkg, ok = x.packages[root][path]
 	}
 	x.mu.RUnlock()
@@ -532,6 +532,8 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 	astFiles := make(map[string]*ast.File)
 	fset := token.NewFileSet()
 
+	// TODO: Use the files slice
+	//
 	// Used for removing deleted/missing files.
 	seen := make([]string, 0, len(files))
 
