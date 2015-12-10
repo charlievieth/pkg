@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"go/build"
 	"math/rand"
 	"runtime"
 	"sync"
@@ -71,12 +72,23 @@ func randPaths() (string, string) {
 	return filepaths[rand.Intn(len(filepaths))], filepaths[rand.Intn(len(filepaths))]
 }
 
+// Update stress-test to ensure Context properly handles concurrent access
+// and updates.
 func TestContextUpdate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Context Update: skipped test")
 	}
+
+	defer func() {
+		if e := recover(); e != nil {
+			t.Fatalf("Context Update Panic: %v", e)
+		}
+	}()
+
 	t.Parallel()
 	c := NewContext(nil, time.Minute)
+
+	// Start update goroutines.
 	for i := 0; i < 40; i++ {
 		go func() {
 			for {
@@ -84,6 +96,8 @@ func TestContextUpdate(t *testing.T) {
 			}
 		}()
 	}
+
+	// Call GOROOT method while simultaneously updating the Context.
 	wg := new(sync.WaitGroup)
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
@@ -98,6 +112,87 @@ func TestContextUpdate(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestContextPkgTargetRoot(t *testing.T) {
+
+	defaultContext := func() *build.Context {
+		return &build.Context{
+			GOROOT:        build.Default.GOROOT,
+			GOPATH:        build.Default.GOPATH,
+			GOOS:          "darwin",
+			GOARCH:        "amd64",
+			Compiler:      "gc",
+			InstallSuffix: "",
+		}
+	}
+
+	{ // No suffix
+		var (
+			pkgName = "bytes"
+			expRoot = "pkg/darwin_amd64"
+			expA    = expRoot + "/" + pkgName + ".a"
+		)
+		ctxt := defaultContext()
+		c := NewContext(ctxt, -1)
+
+		pkgRoot, pkgA, err := c.PkgTargetRoot(pkgName)
+		if err != nil {
+			t.Fatalf("PkgTargetRoot (%+v): %v", ctxt, err)
+		}
+		if expRoot != pkgRoot {
+			t.Errorf("PkgTargetRoot: Root Exp (%v) Got (%v)", expRoot, pkgRoot)
+		}
+		if expA != pkgA {
+			t.Errorf("PkgTargetRoot: A Exp (%v) Got (%v)", expA, pkgA)
+		}
+	}
+
+	{ // 'race' suffix
+		var (
+			suffix  = "race"
+			pkgName = "bytes"
+			expRoot = "pkg/darwin_amd64_race"
+			expA    = expRoot + "/" + pkgName + ".a"
+		)
+		ctxt := defaultContext()
+		ctxt.InstallSuffix = suffix
+
+		c := NewContext(ctxt, -1)
+		pkgRoot, pkgA, err := c.PkgTargetRoot(pkgName)
+		if err != nil {
+			t.Fatalf("PkgTargetRoot (%+v): %v", ctxt, err)
+		}
+		if expRoot != pkgRoot {
+			t.Errorf("PkgTargetRoot: Root Exp (%v) Got (%v)", expRoot, pkgRoot)
+		}
+		if expA != pkgA {
+			t.Errorf("PkgTargetRoot: A Exp (%v) Got (%v)", expA, pkgA)
+		}
+	}
+
+	{ // gccgo
+		var (
+			compiler = "gccgo"
+			pkgName  = "bytes"
+			expRoot  = "pkg/gccgo_darwin_amd64"
+			expA     = expRoot + "/" + "lib" + pkgName + ".a"
+		)
+		ctxt := defaultContext()
+		ctxt.Compiler = compiler
+
+		c := NewContext(ctxt, -1)
+		pkgRoot, pkgA, err := c.PkgTargetRoot(pkgName)
+		if err != nil {
+			t.Fatalf("PkgTargetRoot (%+v): %v", ctxt, err)
+		}
+		if expRoot != pkgRoot {
+			t.Errorf("PkgTargetRoot: Root Exp (%v) Got (%v)", expRoot, pkgRoot)
+		}
+		if expA != pkgA {
+			t.Errorf("PkgTargetRoot: A Exp (%v) Got (%v)", expA, pkgA)
+		}
+	}
 }
 
 func BenchmarkGOROOT(b *testing.B) {
