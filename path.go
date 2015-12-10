@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// TODO: Remove if unused.
 var whitelistedExts = map[string]bool{
 	".bash":        true,
 	".c":           true,
@@ -41,6 +42,9 @@ var whitelistedExts = map[string]bool{
 	"README":       true,
 }
 
+// isWhitelisted, returns if the filename has a white listed extension.
+//
+// TODO: Remove if unused.
 func isWhitelisted(filename string) bool {
 	key := pathpkg.Ext(filename)
 	if key == "" {
@@ -66,7 +70,8 @@ func validName(s string) bool {
 	return len(s) > 0 && s[0] != '_' && s[0] != '.'
 }
 
-// isPkgDir, returns if name is a possible package directory.
+// isPkgDir, returns if the file described by fi is a directory and has a valid
+// name.
 func isPkgDir(fi os.FileInfo) bool {
 	return fi.IsDir() && validName(fi.Name())
 }
