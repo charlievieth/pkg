@@ -98,9 +98,10 @@ func shouldBuild(ctxt *build.Context, content []byte, allTags map[string]bool) b
 //
 func match(ctxt *build.Context, name string, allTags map[string]bool) bool {
 	if name == "" {
-		if allTags != nil {
-			allTags[name] = true
+		if allTags == nil {
+			allTags = make(map[string]bool)
 		}
+		allTags[name] = true
 		return false
 	}
 	if i := strings.Index(name, ","); i >= 0 {
@@ -116,9 +117,10 @@ func match(ctxt *build.Context, name string, allTags map[string]bool) bool {
 		return len(name) > 1 && !match(ctxt, name[1:], allTags)
 	}
 
-	if allTags != nil {
-		allTags[name] = true
+	if allTags == nil {
+		allTags = make(map[string]bool)
 	}
+	allTags[name] = true
 
 	// Tags must be letters, digits, underscores or dots.
 	// Unlike in Go identifiers, all digits are fine (e.g., "386").
