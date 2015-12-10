@@ -2,6 +2,7 @@ package fs
 
 import (
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -198,5 +199,44 @@ func TestFilterGo(t *testing.T) {
 		if exp[i] != list[i] {
 			t.Errorf("FilterGo len: Exp (%v) Got (%v)", exp[i], list[i])
 		}
+	}
+}
+
+func TestFileCloser(t *testing.T) {
+	// os file: This is the control
+	fo, err := os.Open("fs_test.go")
+	if err != nil {
+		t.Fatalf("FileCloser error opening file: %v", err)
+	}
+
+	// fs file: Make sure read ops match 'fo'
+	fs, err := OpenFile("fs_test.go")
+	if err != nil {
+		t.Fatalf("FileCloser error opening file: %v", err)
+	}
+
+	b1 := make([]byte, 16)
+	n1, err := fo.Read(b1)
+	if err != nil {
+		t.Fatalf("FileCloser error reading file: %v", err)
+	}
+
+	b2 := make([]byte, 16)
+	n2, err := fs.Read(b2)
+	if err != nil {
+		t.Fatalf("FileCloser error reading file: %v", err)
+	}
+
+	if n1 != n2 {
+		t.Errorf("FileCloser read length: Exp (%v) Got (%v)", n1, n2)
+	}
+	if !reflect.DeepEqual(b1, b2) {
+		t.Error("FileCloser: bad read")
+	}
+
+	err1 := fo.Close()
+	err2 := fs.Close()
+	if err1 != err2 {
+		t.Errorf("FileCloser Close error: Exp (%v) Got (%v)", n1, n2)
 	}
 }

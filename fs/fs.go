@@ -121,13 +121,13 @@ type fileCloser struct {
 
 // Read, reads from the underlying os.File.
 func (f *fileCloser) Read(p []byte) (n int, err error) {
-	return f.Read(p)
+	return f.f.Read(p)
 }
 
 // Close, closes the underlying os.File and file gate.
 func (f *fileCloser) Close() error {
 	f.fs.closeFileGate()
-	return f.Close()
+	return f.f.Close()
 }
 
 // OpenFile, returns the file named by path for reading.
