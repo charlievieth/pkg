@@ -56,10 +56,12 @@ var ignoredNames = map[string]bool{
 	"testdata": true,
 }
 
+// isIgnored, returns if the filename should be ignored.
 func isIgnored(filename string) bool {
 	return ignoredNames[pathpkg.Base(filename)]
 }
 
+// validName returns if s does not start with a '.' or '_'.
 func validName(s string) bool {
 	return len(s) > 0 && s[0] != '_' && s[0] != '.'
 }
@@ -69,18 +71,21 @@ func isPkgDir(fi os.FileInfo) bool {
 	return fi.IsDir() && validName(fi.Name())
 }
 
+// isGoFile returns if the file described by fi may be a Go source file.
 func isGoFile(fi os.FileInfo) bool {
 	name := fi.Name()
 	return !fi.IsDir() && validName(name) &&
 		strings.HasSuffix(name, ".go")
 }
 
+// isGoFile returns if the file described by fi may be a Go test file.
 func isGoTestFile(fi os.FileInfo) bool {
 	name := fi.Name()
 	return !fi.IsDir() && validName(name) &&
 		strings.HasSuffix(name, "_test.go")
 }
 
+// hasGoFiles returns if any of the names may be a Go source file.
 func hasGoFiles(names []os.FileInfo) bool {
 	for _, fi := range names {
 		if isGoFile(fi) {
@@ -90,8 +95,10 @@ func hasGoFiles(names []os.FileInfo) bool {
 	return false
 }
 
-func isInternal(p string) bool {
-	return pathpkg.Base(p) == "internal"
+// isInternal returns if the base of path equals 'internal'.  Used for
+// identifying internal Go package directories.
+func isInternal(path string) bool {
+	return pathpkg.Base(path) == "internal"
 }
 
 // trimPathPrefix, remove the prefix from path s.
@@ -103,7 +110,7 @@ func trimPathPrefix(s, prefix string) string {
 }
 
 // hasRoot, returns if path is inside the directory tree rooted at root.
-// Should be used for internal paths (i.e. paths we know to clean).
+// Should be used for internal paths (i.e. clean slash-separated paths).
 func hasRoot(path, root string) bool {
 	// TODO: 'hasRoot' is a bad name, merge with 'hasPrefix'
 	return len(path) >= len(root) && path[0:len(root)] == root
@@ -113,16 +120,19 @@ func hasRoot(path, root string) bool {
 // Unlike hasRoot the path is not assumed to be clean.  The prefix must be
 // clean.  Use when matching external strings.
 func hasPrefix(path, prefix string) bool {
-	// TODO: Remove if unused.
+	if strings.HasPrefix(path, prefix) {
+		return true
+	}
 	if len(path) < len(prefix) {
 		return false
 	}
-	if path[0:len(prefix)] == prefix {
-		return true
+	if strings.ContainsRune(prefix, os.PathSeparator) {
+		return strings.HasPrefix(path, clean(prefix))
 	}
-	return hasRoot(clean(path), prefix)
+	return false
 }
 
+// clean, converts OS specific separators to slashes and cleans path.
 func clean(path string) string {
 	return pathpkg.Clean(filepath.ToSlash(path))
 }
