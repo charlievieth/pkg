@@ -12,6 +12,8 @@ import (
 	"git.vieth.io/pkg/fs"
 )
 
+// A Context provides safe-concurrent access to a build.Context, that optionally
+// checks for changes to Go specific environment variables (GOROOT, GOPATH).
 type Context struct {
 	ctxt           *build.Context
 	srcDirs        []string
@@ -24,6 +26,8 @@ type Context struct {
 // interval of updateInterval.  If updateInterval is less than or equal to
 // zero the returned Context will not check the environment for changes to
 // GOROOT and GOPATH.
+//
+// If ctxt is nil, build.Default and the current GOROOT and GOPATH are used.
 func NewContext(ctxt *build.Context, updateInterval time.Duration) *Context {
 	c := &Context{
 		ctxt:           ctxt,
@@ -33,7 +37,8 @@ func NewContext(ctxt *build.Context, updateInterval time.Duration) *Context {
 	return c
 }
 
-// Context returns a pointer the the current build.Context.
+// Context returns a pointer the the current build.Context.  The returned
+// *build.Context should *not* be modified by the reciever.
 func (c *Context) Context() *build.Context {
 	c.Update()
 	return c.ctxt
