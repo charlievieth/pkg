@@ -1,7 +1,9 @@
 package fs
 
 import (
+	"os"
 	"testing"
+	"time"
 )
 
 // Simple initialization test.
@@ -55,5 +57,117 @@ func TestFSInit(t *testing.T) {
 	}
 	if fs.fsDirGate != nil {
 		t.Errorf("FS Init: non-nil %s", "fsDirGate")
+	}
+}
+
+var sameFileTests = []struct {
+	fi1  os.FileInfo
+	fi2  os.FileInfo
+	same bool
+}{
+	{ // 0: Same
+		fi1: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		fi2: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		same: true,
+	},
+	{ // 1: Name
+		fi1: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		fi2: &fileStat{
+			name:    "b", // name
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		same: false,
+	},
+	{ // 2: Size
+		fi1: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		fi2: &fileStat{
+			name:    "a",
+			size:    2, // size
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		same: false,
+	},
+	{ // 3: Mode
+		fi1: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		fi2: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    0, // mode
+			modTime: time.Unix(0, 0),
+		},
+		same: false,
+	},
+	{ // 4: Mod Time
+		fi1: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 0),
+		},
+		fi2: &fileStat{
+			name:    "a",
+			size:    1,
+			mode:    os.ModeDir,
+			modTime: time.Unix(0, 1), // modTime
+		},
+		same: false,
+	},
+}
+
+func TestSameFile(t *testing.T) {
+	for i, x := range sameFileTests {
+		same := SameFile(x.fi1, x.fi2)
+		if same != x.same {
+			t.Errorf("SameFile (%v) (%+v): Exp (%v) Got (%v)", i, x, x.same, same)
+		}
+	}
+}
+
+func TestSameNilFile(t *testing.T) {
+	// nil should equal nil
+	if ok := SameFile(nil, nil); !ok {
+		t.Errorf("SameFile (%v) (%v): %v", nil, nil, ok)
+	}
+
+	// Make sure SameFile does not panic.
+	defer func() {
+		if e := recover(); e != nil {
+			t.Fatalf("SameFile Panic: %v", e)
+		}
+	}()
+	fi := new(fileStat)
+	if ok := SameFile(fi, nil); ok {
+		t.Errorf("SameFile (%v) (%v): %v", nil, nil, ok)
+	}
+	if ok := SameFile(nil, fi); ok {
+		t.Errorf("SameFile (%v) (%v): %v", nil, nil, ok)
 	}
 }

@@ -113,7 +113,7 @@ func (fs *FS) ReadFile(path string) ([]byte, error) {
 	return ioutil.ReadFile(path)
 }
 
-// A fileCloser
+// A fileCloser provides a ReadCloser interface to a File.
 type fileCloser struct {
 	f  *os.File
 	fs *FS
@@ -212,7 +212,7 @@ func FilterList(list []string, fn FilterFunc) []string {
 // ReaddirFunc reads reads the directory named by path and returns a slice of
 // os.FileInfo matched by FilterFunc fn, in sorted order.
 //
-// Note: path must be absolute.
+// Note: Behavior is undefined if path is not absolute.
 func (fs *FS) ReaddirFunc(path string, fn FilterFunc) ([]os.FileInfo, error) {
 	names, err := fs.Readdirnames(path)
 	names = FilterList(names, fn)
@@ -302,12 +302,10 @@ func IsPathErr(err error) bool {
 // modtime, directory mode or are both nil.
 func SameFile(fi1, fi2 os.FileInfo) bool {
 	if fi1 == nil {
-		if fi2 == nil {
-			return true
-		}
-		return false
+		return fi2 == nil
 	}
-	return fi1.ModTime() == fi2.ModTime() &&
+	return fi2 != nil &&
+		fi1.ModTime() == fi2.ModTime() &&
 		fi1.Size() == fi2.Size() &&
 		fi1.Name() == fi2.Name() &&
 		fi1.IsDir() == fi2.IsDir()
