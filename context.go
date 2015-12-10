@@ -20,6 +20,10 @@ type Context struct {
 	mu             sync.RWMutex
 }
 
+// NewContext, returns a new Context for build.Context ctxt with an update
+// interval of updateInterval.  If updateInterval is less than or equal to
+// zero the returned Context will not check the environment for changes to
+// GOROOT and GOPATH.
 func NewContext(ctxt *build.Context, updateInterval time.Duration) *Context {
 	c := &Context{
 		ctxt:           ctxt,
@@ -29,30 +33,40 @@ func NewContext(ctxt *build.Context, updateInterval time.Duration) *Context {
 	return c
 }
 
+// Context returns a pointer the the current build.Context.
 func (c *Context) Context() *build.Context {
 	c.Update()
 	return c.ctxt
 }
 
+// SrcDirs returns a list of package source root directories.  It draws from
+// the current Go root and Go path but omits directories that do not exist.
+//
+// Results are cached for efficieny and only updated when GOROOT or GOPATH
+// change.
 func (c *Context) SrcDirs() []string {
 	c.Update()
 	return c.srcDirs
 }
 
+// GOROOT returns the GOROOT of Context.
 func (c *Context) GOROOT() string {
 	return c.Context().GOROOT
 }
 
+// GOPATH returns the GOPATH of Context.
 func (c *Context) GOPATH() string {
 	return c.Context().GOPATH
 }
 
+// SetGoRoot sets the Context GOROOT.
 func (c *Context) SetGoRoot(s string) {
 	if s := clean(s); fs.IsDir(s) {
 		c.doUpdate(s, c.GOPATH())
 	}
 }
 
+// SetGoPath sets the Context GOPATH.
 func (c *Context) SetGoPath(s string) {
 	if s := clean(s); fs.IsDir(s) {
 		c.doUpdate(c.GOROOT(), s)
@@ -83,17 +97,29 @@ func (c *Context) PkgTargetRoot(path string) (pkgRoot string, pkgA string, err e
 	return pkgRoot, pkgA, err
 }
 
+// MatchFile reports whether the file with the given name in the given directory
+// matches the context and would be included in a Package created by ImportDir
+// of that directory.
+//
+// MatchFile considers the name of the file and may use ctxt.OpenFile to
+// read some or all of the file's content.
+//
+// See: go/build/build.go Context.MatchFile for more information.
 func (c *Context) MatchFile(dir, name string) bool {
 	ok, err := c.Context().MatchFile(dir, name)
 	return ok && err == nil
 }
 
+// Update, updates or initializes a Context that is outdated or has a nil
+// build.Context or SrcDirs.
 func (c *Context) Update() {
 	if c.ctxt == nil || c.srcDirs == nil || c.outdated() {
 		c.doUpdate(runtime.GOROOT(), os.Getenv("GOPATH"))
 	}
 }
 
+// outdated returns if the Context is outdated and should be updated.  If the
+// updateInterval is less than or equal to zero, false is always returned.
 func (c *Context) outdated() bool {
 	if c.updateInterval <= 0 {
 		return false
@@ -104,6 +130,7 @@ func (c *Context) outdated() bool {
 	return update
 }
 
+// doUpdate, updates the current GOROOT and GOPATH to root and path.
 func (c *Context) doUpdate(root, path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -126,6 +153,7 @@ func (c *Context) doUpdate(root, path string) {
 	}
 }
 
+// initDefault, initializes the Context to build.Default.
 func (c *Context) initDefault() {
 	ctxt := build.Default
 	ctxt.GOPATH = os.Getenv("GOPATH")
