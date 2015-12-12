@@ -156,6 +156,7 @@ func (c *Corpus) updateIndex() {
 }
 
 func (c *Corpus) Init() error {
+	logEvents := c.LogEvents
 	c.LogEvents = false
 	go c.eventStream()
 	if c.packages == nil {
@@ -167,7 +168,7 @@ func (c *Corpus) Init() error {
 	if err := c.initDirTree(); err != nil {
 		return err
 	}
-	c.LogEvents = true
+	c.LogEvents = logEvents
 	go c.refreshIndexLoop()
 	return nil
 }
