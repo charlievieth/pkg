@@ -284,10 +284,11 @@ func (p *Package) removeNotSeen(seen []string) {
 }
 
 type PackageIndex struct {
-	c        *Corpus
-	strings  util.StringInterner
-	packages map[string]map[string]*Package // "$GOROOT/src" => "net/http" => Package
-	mu       sync.RWMutex
+	c           *Corpus
+	packages    map[string]map[string]*Package // "$GOROOT/src" => "net/http" => Package
+	packagePath map[string]string              // "http" => "$GOROOT/src/net/http"
+	strings     util.StringInterner
+	mu          sync.RWMutex
 }
 
 func newPackageIndex(c *Corpus) *PackageIndex {
@@ -320,6 +321,7 @@ func (x *PackageIndex) matchFile(p *Package, name string) bool {
 	return x.c.ctxt.MatchFile(p.Dir, name)
 }
 
+// addPackage, adds package p to the index.
 func (x *PackageIndex) addPackage(p *Package) {
 	x.mu.Lock()
 	if x.packages == nil {
@@ -329,9 +331,17 @@ func (x *PackageIndex) addPackage(p *Package) {
 		x.packages[p.SrcRoot] = make(map[string]*Package)
 	}
 	x.packages[p.SrcRoot][p.ImportPath] = p
+
+	if !p.IsCommand() {
+		if x.packagePath == nil {
+			x.packagePath = make(map[string]string)
+		}
+		x.packagePath[p.Name] = p.Dir
+	}
 	x.mu.Unlock()
 }
 
+// lookup returns the package located at path in directory root, if any.
 func (x *PackageIndex) lookup(root, path string) (pkg *Package, ok bool) {
 	x.mu.RLock()
 	if x.packages != nil && x.packages[root] != nil {
@@ -341,34 +351,53 @@ func (x *PackageIndex) lookup(root, path string) (pkg *Package, ok bool) {
 	return
 }
 
+// lookupPath returns the package located at path, if any.
 func (x *PackageIndex) lookupPath(path string) (*Package, bool) {
-	root := x.matchSrcRoot(path)
-	if root == "" || x.packages[root] == nil {
-		return nil, false
+	if root := x.matchSrcRoot(path); root != "" {
+		return x.lookup(root, trimPathPrefix(path, root))
 	}
-	return x.lookup(root, trimPathPrefix(path, root))
+	return nil, false
 }
 
+// lookupPackage returns a package by name.  For example "http" should return
+// the "net/http" package located at "$GOROOT/src/net/http".
+func (x *PackageIndex) lookupPackage(name string) (*Package, bool) {
+	if x.packages == nil || x.packagePath == nil {
+		return nil, false
+	}
+	x.mu.Lock()
+	if path, ok := x.packagePath[name]; ok {
+		x.mu.Unlock()
+		return x.lookupPath(path)
+	}
+	x.mu.Unlock()
+	return nil, false
+}
+
+// remove, removes the package located at path from directory root.
 func (x *PackageIndex) remove(root, path string) {
-	if x.packages == nil {
+	if x.packages == nil || x.packagePath == nil {
 		return
 	}
 	x.mu.Lock()
 	if m := x.packages[root]; m != nil {
 		if _, ok := m[path]; ok {
-			delete(x.packages[root], path)
+			delete(m, path)
 			x.notify(DeleteEvent, path)
 		}
+	}
+	name := pathpkg.Base(path)
+	if x.packagePath[name] == pathpkg.Join(root, path) {
+		delete(x.packagePath, name)
 	}
 	x.mu.Unlock()
 }
 
+// removePath removes the package rooted at path from the index.
 func (x *PackageIndex) removePath(path string) {
-	root := x.matchSrcRoot(path)
-	if root == "" || x.packages[root] == nil {
-		return
+	if root := x.matchSrcRoot(path); root != "" {
+		x.remove(root, trimPathPrefix(path, root))
 	}
-	x.remove(root, trimPathPrefix(path, root))
 }
 
 func (x *PackageIndex) ImportDir(dir string) (*Package, error) {
