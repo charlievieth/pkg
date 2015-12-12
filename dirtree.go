@@ -55,14 +55,18 @@ func (t *treeBuilder) seen(path string) (ok bool) {
 
 // updateDirTree, updates and returns Directory dir and all sub-directories.
 // If the directory structure changed sub-directories are added and removed,
-// accordingly.  Nil is returned if the path pointed to by dir is no longer
-// a directory or an error was encountered.
+// accordingly.
+//
+// Nil is returned if the path pointed to by dir is no longer a directory,
+// an error was encountered, or the directory does not contains any Go
+// source file and has no sub-directories.
 func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 	// exitErr, deletes all Packages rooted at d.
 	exitErr := func(d *Directory) *Directory {
 		t.removePackage(d)
 		return nil
 	}
+	// TODO: Handle circular references.
 	if t.seen(dir.Path) || isIgnored(dir.Name) {
 		return exitErr(dir)
 	}
@@ -259,14 +263,14 @@ func (t *treeBuilder) removePackage(dir *Directory) {
 }
 
 type Directory struct {
-	Path     string // directory path
-	Name     string // directory name
-	PkgName  string // Go pkg name
-	HasPkg   bool   // has Go pkg
-	Internal bool   // Internal Go pkg
-	Info     os.FileInfo
-	Dirs     map[string]*Directory
-	Depth    int
+	Path     string                // directory path
+	Name     string                // directory name
+	PkgName  string                // Go pkg name
+	HasPkg   bool                  // has Go pkg
+	Internal bool                  // Internal Go pkg
+	Info     os.FileInfo           // FileInfo
+	Dirs     map[string]*Directory // Sub-directories
+	Depth    int                   // Distance from root
 }
 
 func (dir *Directory) walk(c chan<- *Directory, skipRoot bool) {
