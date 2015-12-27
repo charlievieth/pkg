@@ -14,7 +14,6 @@ const defaultMaxDepth = 512
 
 type treeBuilder struct {
 	c        *Corpus
-	x        *PackageIndex
 	maxDepth int
 	names    map[string]bool // dirs names - to prevent loops
 	mu       sync.Mutex      // mutext for names map
@@ -26,7 +25,6 @@ func newTreeBuilder(c *Corpus, maxDepth int) *treeBuilder {
 	}
 	return &treeBuilder{
 		c:        c,
-		x:        c.packages,
 		maxDepth: maxDepth,
 		names:    make(map[string]bool),
 	}
@@ -93,7 +91,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 	var dirchs []chan *Directory
 	if noChange {
 		if dir.HasPkg {
-			pkg, _ := t.x.updatePkg(dir.Path, dir.Info)
+			pkg, _ := t.updatePackage(dir.Path, dir.Info)
 			if pkg != nil {
 				dir.PkgName = pkg.Name
 				dir.HasPkg = pkg.isPkgDir()
@@ -112,7 +110,7 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 			return exitErr(dir)
 		}
 		// Re-Index directory
-		pkg, err := t.x.indexPkg(dir.Path, dir.Info, list)
+		pkg, err := t.indexPackage(dir.Path, dir.Info, list)
 		if err == nil {
 			dir.PkgName = pkg.Name
 			dir.HasPkg = pkg.isPkgDir()
@@ -203,7 +201,7 @@ func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
 		pkgName string
 		hasPkg  bool
 	)
-	if pkg, err := t.x.indexPkg(path, info, list); err == nil {
+	if pkg, err := t.indexPackage(path, info, list); err == nil {
 		pkgName = pkg.Name
 		hasPkg = pkg.isPkgDir()
 	}
@@ -248,14 +246,30 @@ func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
 	}
 }
 
+// indexPackage, indexes the package.
+func (t *treeBuilder) indexPackage(dir string, fi os.FileInfo, files []os.FileInfo) (*Package, error) {
+	if t.c.packages != nil {
+		return t.c.packages.indexPkg(dir, fi, files)
+	}
+	return nil, nil
+}
+
+// updatePackage, updates the package.
+func (t *treeBuilder) updatePackage(dir string, fi os.FileInfo) (*Package, error) {
+	if t.c.packages != nil {
+		return t.c.packages.updatePkg(dir, fi)
+	}
+	return nil, nil
+}
+
 // removePackage, removes any Packages rooted at dir.
 func (t *treeBuilder) removePackage(dir *Directory) {
 	if dir == nil {
 		return
 	}
 	t.notify(DeleteEvent, dir.Path)
-	if dir.HasPkg {
-		t.x.removePath(dir.Path)
+	if dir.HasPkg && t.c.packages != nil {
+		t.c.packages.removePath(dir.Path)
 	}
 	for d := range dir.iter(true) {
 		t.removePackage(d)
