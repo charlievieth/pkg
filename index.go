@@ -106,6 +106,22 @@ func (x *Index) hasPackage(importPath string) bool {
 	return ok
 }
 
+// WARN
+func (x *Index) Idents() []Ident {
+	if x.idents == nil {
+		return nil
+	}
+	x.mu.RLock()
+	ids := make([]Ident, 0, 512)
+	for _, m := range x.idents {
+		for _, id := range m {
+			ids = append(ids, id...)
+		}
+	}
+	x.mu.RUnlock()
+	return ids
+}
+
 // initMaps, inits the Index's maps.  Lock the mutex for writing before calling.
 func (x *Index) initMaps() {
 	if x.exports == nil {

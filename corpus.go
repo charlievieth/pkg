@@ -229,6 +229,14 @@ func (c *Corpus) Dirs() map[string]*Directory {
 	return c.dirs
 }
 
+// WARN
+func (c *Corpus) Idents() []Ident {
+	if c.idents == nil {
+		return nil
+	}
+	return c.idents.Idents()
+}
+
 func (c *Corpus) DirList() map[string]*DirList {
 	m := make(map[string]*DirList)
 	for root, dir := range c.dirs {
