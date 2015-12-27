@@ -51,9 +51,9 @@ func (t *treeBuilder) seen(path string) (ok bool) {
 	return ok
 }
 
-// updateDirTree, updates and returns Directory dir and all sub-directories.
-// If the directory structure changed sub-directories are added and removed,
-// accordingly.
+// updateDirTree, updates and returns a copy of Directory dir and all
+// sub-directories.  If the directory structure changed sub-directories
+// are added and removed, accordingly.
 //
 // Nil is returned if the path pointed to by dir is no longer a directory,
 // an error was encountered, or the directory does not contains any Go
@@ -71,8 +71,19 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 
 	// At or below MaxDepth, just return dir without checking
 	// FileInfo or any sub-directories.
-	if t.maxDepth != 0 && dir.Depth >= t.maxDepth {
-		return dir
+	if t.maxDepth > 0 && dir.Depth >= t.maxDepth {
+		// Remove sub-directories
+		if dir.Dirs != nil {
+			t.removeSubPackages(dir)
+		}
+		t.removePackage(dir)
+		// Make sure this is the same as newDirTree.
+		return &Directory{
+			Depth:    dir.Depth,
+			Path:     dir.Path,
+			Name:     dir.Name,
+			Internal: dir.Internal,
+		}
 	}
 
 	fi, err := fs.Stat(dir.Path)
@@ -119,7 +130,8 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 			if isPkgDir(fi) {
 				ch := make(chan *Directory, 1)
 				dirchs = append(dirchs, ch)
-				if d := dir.Dirs[fi.Name()]; d != nil {
+				name := fi.Name()
+				if d := dir.lookupLocal(name); d != nil {
 					// Update existing sub-directory
 					go func(d *Directory) {
 						ch <- t.updateDirTree(d)
@@ -127,8 +139,8 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 				} else {
 					// Add new sub-directory
 					go func(fi os.FileInfo) {
-						path := pathpkg.Join(dir.Path, fi.Name())
-						ch <- t.newDirTree(path, fi, dir.Depth, dir.Internal)
+						path := pathpkg.Join(dir.Path, name)
+						ch <- t.newDirTree(path, fi, dir.Depth+1, dir.Internal)
 					}(fi)
 				}
 			}
@@ -158,11 +170,22 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 		}
 	}
 
-	// Do not assign until we know there are no errors.
-	// Removing sub-directory packages requires the old
-	// dirs map.
-	dir.Dirs = dirs
-	return dir
+	// Send update notification.
+	if !noChange {
+		t.notify(UpdateEvent, dir.Path)
+	}
+
+	// Return a copy of the Directory.
+	return &Directory{
+		Path:     dir.Path,
+		Name:     dir.Name,
+		PkgName:  dir.PkgName,
+		HasPkg:   dir.HasPkg,
+		Internal: dir.Internal,
+		Info:     dir.Info,
+		Dirs:     dirs, // updated sub-directories
+		Depth:    dir.Depth,
+	}
 }
 
 func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
@@ -172,7 +195,7 @@ func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
 	if t.seen(path) || isIgnored(name) {
 		return nil
 	}
-	if t.maxDepth != 0 && depth >= t.maxDepth {
+	if t.maxDepth > 0 && depth >= t.maxDepth {
 		// Return a dummy directory so that the
 		// parent directory does not discard it.
 		return &Directory{
@@ -262,7 +285,7 @@ func (t *treeBuilder) updatePackage(dir string, fi os.FileInfo) (*Package, error
 	return nil, nil
 }
 
-// removePackage, removes any Packages rooted at dir.
+// removePackage, removes any Packages rooted at dir from the index.
 func (t *treeBuilder) removePackage(dir *Directory) {
 	if dir == nil {
 		return
@@ -273,6 +296,22 @@ func (t *treeBuilder) removePackage(dir *Directory) {
 	}
 	for d := range dir.iter(true) {
 		t.removePackage(d)
+	}
+}
+
+// removeSubPackages, removes any packages rooted below dir.  Used to trim
+// the package index when MaxDepth is decreased.
+//
+// Unlike removePackages, no notifications are sent.
+func (t *treeBuilder) removeSubPackages(dir *Directory) {
+	if dir == nil {
+		return
+	}
+	for d := range dir.iter(true) {
+		if d.HasPkg && t.c.packages != nil {
+			t.c.packages.removePath(d.Path)
+		}
+		t.removeSubPackages(d)
 	}
 }
 
