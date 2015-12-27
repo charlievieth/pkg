@@ -8,9 +8,37 @@ package buildutil
 import (
 	"bytes"
 	"go/build"
+	pathpkg "path"
+	"path/filepath"
 	"strings"
 	"unicode"
 )
+
+func GoodOSArchFile(ctxt *build.Context, name string, allTags map[string]bool) bool {
+	return goodOSArchFile(ctxt, name, allTags)
+}
+
+var defaultContext = build.Default
+
+func FileTags(name string, allTags map[string]bool) {
+	if allTags != nil {
+		name = pathpkg.Base(filepath.Clean(name))
+		goodOSArchFile(&defaultContext, name, allTags)
+	}
+}
+
+// BuildTagsadds any build tags found in content to allTags.
+func BuildTags(content []byte, allTags map[string]bool) {
+	if allTags != nil {
+		shouldBuild(&defaultContext, content, allTags)
+	}
+}
+
+// ShouldBuild reports whether it is okay to use this file, and adds any build
+// tags to allTags.
+func ShouldBuild(ctxt *build.Context, content []byte, allTags map[string]bool) bool {
+	return shouldBuild(ctxt, content, allTags)
+}
 
 var slashslash = []byte("//")
 
@@ -98,10 +126,9 @@ func shouldBuild(ctxt *build.Context, content []byte, allTags map[string]bool) b
 //
 func match(ctxt *build.Context, name string, allTags map[string]bool) bool {
 	if name == "" {
-		if allTags == nil {
-			allTags = make(map[string]bool)
+		if allTags != nil {
+			allTags[name] = true
 		}
-		allTags[name] = true
 		return false
 	}
 	if i := strings.Index(name, ","); i >= 0 {
@@ -117,10 +144,9 @@ func match(ctxt *build.Context, name string, allTags map[string]bool) bool {
 		return len(name) > 1 && !match(ctxt, name[1:], allTags)
 	}
 
-	if allTags == nil {
-		allTags = make(map[string]bool)
+	if allTags != nil {
+		allTags[name] = true
 	}
-	allTags[name] = true
 
 	// Tags must be letters, digits, underscores or dots.
 	// Unlike in Go identifiers, all digits are fine (e.g., "386").
@@ -154,10 +180,4 @@ func match(ctxt *build.Context, name string, allTags map[string]bool) bool {
 	}
 
 	return false
-}
-
-// BuildTags reports whether it is okay to use this file, and adds any build
-// tags to allTags.
-func BuildTags(ctxt *build.Context, content []byte, allTags map[string]bool) bool {
-	return shouldBuild(ctxt, content, allTags)
 }
