@@ -64,19 +64,21 @@ func (t *treeBuilder) updateDirTree(dir *Directory) *Directory {
 		t.removePackage(d)
 		return nil
 	}
-	// TODO: Handle circular references.
+
+	// TODO: Handle circular references (filepath.EvalSymLink ???).
 	if t.seen(dir.Path) || isIgnored(dir.Name) {
 		return exitErr(dir)
 	}
 
 	// At or below MaxDepth, just return dir without checking
 	// FileInfo or any sub-directories.
+	//
+	// TODO: Improve the handling of package removal.
 	if t.maxDepth > 0 && dir.Depth >= t.maxDepth {
 		// Remove sub-directories
 		if dir.Dirs != nil {
 			t.removeSubPackages(dir)
 		}
-		t.removePackage(dir)
 		// Make sure this is the same as newDirTree.
 		return &Directory{
 			Depth:    dir.Depth,
@@ -212,9 +214,7 @@ func (t *treeBuilder) newDirTree(path string, info os.FileInfo, depth int,
 
 	// If the current name is "internal" set internal to true
 	// so that all sub-directories will also be marked "internal".
-	//
-	// TODO (CEV): If supported, handle nested "internal" directories.
-	if !internal && isInternal(path) {
+	if !internal && isInternal(name) {
 		internal = true
 	}
 

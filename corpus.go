@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// TODO:
+//  - Add fields for ignoring directories.
+//  - Improve Corpus creation (Context) and defaults.
+//  - Remove unused fields
+
 type Corpus struct {
 	ctxt               *Context
 	MaxDepth           int

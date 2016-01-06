@@ -11,6 +11,10 @@ import (
 	"git.vieth.io/pkg/util"
 )
 
+// TODO:
+//  - Add Recv field
+//  - Add struct and method fields
+
 type Ident struct {
 	Name    string  // Type, func or type.method name
 	Package string  // Package name "http"

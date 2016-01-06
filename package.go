@@ -22,6 +22,7 @@ type File struct {
 	Info os.FileInfo // file info, used for updating
 }
 
+// TODO: Remove if unused.
 func NewFile(path string, info bool) (File, error) {
 	f := File{
 		Name: filepath.Base(path),
@@ -102,7 +103,7 @@ func (m FileMap) appendFilePaths(s []string) []string {
 	return s
 }
 
-// removeNotSeen, removes files not present in seen from the FileMap.
+// removeNotSeen, removes files not present in sorted slice seen.
 func (m FileMap) removeNotSeen(seen []string) {
 	for name, file := range m {
 		if sort.SearchStrings(seen, file.Name) == len(seen) {
@@ -263,6 +264,7 @@ func (p *Package) removeFile(name string) {
 	}
 }
 
+// isPkgDir, returns if the Package contains any source files.
 func (p *Package) isPkgDir() bool {
 	for _, m := range p.files {
 		if len(m) != 0 {
@@ -277,7 +279,9 @@ func (p *Package) removeNotSeen(seen []string) {
 	if !p.isPkgDir() {
 		return
 	}
-	sort.Strings(seen)
+	if !sort.StringsAreSorted(seen) {
+		sort.Strings(seen)
+	}
 	for _, m := range p.files {
 		m.removeNotSeen(seen)
 	}
@@ -400,6 +404,7 @@ func (x *PackageIndex) removePath(path string) {
 	}
 }
 
+// TODO: Remove if unused.
 func (x *PackageIndex) ImportDir(dir string) (*Package, error) {
 	fi, err := fs.Stat(dir)
 	if err != nil || !fi.IsDir() {
@@ -515,6 +520,8 @@ func (x *PackageIndex) updatePkg(dir string, fi os.FileInfo) (*Package, error) {
 // indexPkg, indexes the package found at dir.
 func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo) (*Package, error) {
 	// TODO: Write doc for this monster.
+	// TODO: Test if we need to use filepath.EvalSymlinks to prevent duplicate
+	// entries and other gremlins.
 
 	srcRoot := x.matchSrcRoot(dir)
 	if srcRoot == "" {
@@ -595,9 +602,11 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 			// No changes, and the file is already indexed.
 
 		case isGoTestFile(fi):
+			// Don't parse Go test files.
 			p.addFile(TestGoFile, f)
 
 		case !x.matchFile(p, f.Name):
+			// Ignored Go file.
 			p.addFile(IgnoredGoFile, f)
 
 		default:
@@ -639,6 +648,7 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 	// name will not have been set, attempt to set it via the
 	// ignored Go source files.
 	if p.Name == "" && len(p.files[IgnoredGoFile]) != 0 {
+		// TODO: PkgNameLoop can probably be removed.
 	PkgNameLoop:
 		for _, f := range p.files[IgnoredGoFile] {
 			if !x.parseFileName(fset, p, f) {
