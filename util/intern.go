@@ -18,6 +18,31 @@ func (x *StringInterner) get(s string) (string, bool) {
 	return s, ok
 }
 
+// WARN: NEW!!!
+func (x *StringInterner) lazyInit() {
+	if x.strings == nil {
+		x.Lock()
+		if x.strings == nil {
+			x.strings = make(map[string]string)
+		}
+		x.Unlock()
+	}
+}
+
+// WARN: NEW!!!
+func (x *StringInterner) intern(s string) string {
+	x.lazyInit()
+	x.RLock()
+	si, ok := x.strings[s]
+	x.RUnlock()
+	if !ok {
+		x.Lock()
+		x.strings[si] = si
+		x.Unlock()
+	}
+	return si
+}
+
 func (x *StringInterner) add(s string) string {
 	x.Lock()
 	if x.strings == nil {
