@@ -1,8 +1,17 @@
 // +build !go1.6
 
+// Copyright 2011 The Go Authors.  All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// build.ImportMode for Go version 1.5 (backported support for vendoring).
+
 package buildutil
 
-import "go/build"
+import (
+	"go/build"
+	"os"
+)
 
 const (
 	// If FindOnly is set, Import stops after locating the directory
@@ -37,3 +46,15 @@ const (
 	// Setting IgnoreVendor ignores vendor directories.
 	IgnoreVendor = build.ImportComment << 1
 )
+
+// SetIgnoreVendor sets the IgnoreVendor bits for build.ImportMode mode if the
+// "GO15VENDOREXPERIMENT" environment variable is "1" and returns the updated
+// build.ImportMode.
+//
+// For Go version 1.5 only.  All other Go versions return the mode unmodified.
+func SetIgnoreVendor(mode build.ImportMode) build.ImportMode {
+	if os.Getenv("GO15VENDOREXPERIMENT") == "1" {
+		return mode & IgnoreVendor
+	}
+	return mode
+}

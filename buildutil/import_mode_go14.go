@@ -1,8 +1,10 @@
-// +build go1.6
+// +build !go1.5
 
 // Copyright 2011 The Go Authors.  All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
+
+// build.ImportMode for Go versions 1.4 and below (no support vendoring).
 
 package buildutil
 
@@ -23,21 +25,6 @@ const (
 	// or finds conflicting comments in multiple source files.
 	// See golang.org/s/go14customimport for more information.
 	ImportComment = build.ImportComment
-
-	// By default, Import searches vendor directories
-	// that apply in the given source directory before searching
-	// the GOROOT and GOPATH roots.
-	// If an Import finds and returns a package using a vendor
-	// directory, the resulting ImportPath is the complete path
-	// to the package, including the path elements leading up
-	// to and including "vendor".
-	// For example, if Import("y", "x/subdir", 0) finds
-	// "x/vendor/y", the returned package's ImportPath is "x/vendor/y",
-	// not plain "y".
-	// See golang.org/s/go15vendor for more information.
-	//
-	// Setting IgnoreVendor ignores vendor directories.
-	IgnoreVendor = build.IgnoreVendor
 )
 
 // SetIgnoreVendor sets the IgnoreVendor bits for build.ImportMode mode if the
