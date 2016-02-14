@@ -1,8 +1,9 @@
-// +build !go1.6
-
 // Copyright 2011 The Go Authors.  All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
+
+// Backported vendor support from Go 1.6 to Go 1.5.  Only Go 1.5 needs to
+// backported support.
 
 package buildutil
 
