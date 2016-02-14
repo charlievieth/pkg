@@ -4,7 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"path/filepath"
+	pathpkg "path"
 
 	"git.vieth.io/pkg/fs"
 )
@@ -32,7 +32,7 @@ func parseFile(fset *token.FileSet, filename string, mode parser.Mode) (*ast.Fil
 func parseFiles(fset *token.FileSet, dirname string, names []string) (map[string]*ast.File, error) {
 	files := make(map[string]*ast.File, len(names))
 	for _, n := range names {
-		p := filepath.Join(dirname, n)
+		p := pathpkg.Join(dirname, n)
 		af, err := parseFile(fset, p, parser.ParseComments)
 		if err != nil {
 			return nil, err
