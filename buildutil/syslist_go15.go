@@ -1,6 +1,6 @@
-// +build go1.6
+// +build !go1.6
 
-// Default Go (version 1.6) OS and Arch list.
+// Default Go (version 1.5) OS and Arch list.
 
 package buildutil
 
