@@ -749,6 +749,17 @@ func parseWord(data []byte) (word, rest []byte) {
 	return word, rest
 }
 
+// MatchFile reports whether the file with the given name in the given directory
+// matches the context and would be included in a Package created by ImportDir
+// of that directory.
+//
+// MatchFile considers the name of the file and may use ctxt.OpenFile to
+// read some or all of the file's content.
+func MatchFile(ctxt *build.Context, dir, name string) (match bool, err error) {
+	match, _, _, err = newContext(ctxt).matchFile(dir, name, false, nil)
+	return
+}
+
 // matchFile determines whether the file with the given name in the given directory
 // should be included in the package being constructed.
 // It returns the data read from the file.

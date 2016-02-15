@@ -39,3 +39,13 @@ func Import(bc *build.Context, path string, srcDir string, mode build.ImportMode
 func ImportDir(bc *build.Context, dir string, mode build.ImportMode) (*build.Package, error) {
 	return Import(bc, ".", dir, mode)
 }
+
+// MatchFile reports whether the file with the given name in the given directory
+// matches the context and would be included in a Package created by ImportDir
+// of that directory.
+//
+// MatchFile considers the name of the file and may use ctxt.OpenFile to
+// read some or all of the file's content.
+func MatchFile(ctxt *build.Context, dir, name string) (match bool, err error) {
+	return ctxt.MatchFile(dir, name)
+}
