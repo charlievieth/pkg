@@ -1,8 +1,8 @@
-// +build !go1.5
-
 // Copyright 2011 The Go Authors.  All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
+
+// +build !go1.5
 
 // For all Go versions other than 1.5 use the Import and ImportDir functions
 // declared in go/build.
