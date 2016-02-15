@@ -1,4 +1,4 @@
-// +build !go1.6
+// +build go1.5
 
 // Copyright 2011 The Go Authors.  All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -44,7 +44,7 @@ const (
 	// See golang.org/s/go15vendor for more information.
 	//
 	// Setting IgnoreVendor ignores vendor directories.
-	IgnoreVendor = build.ImportComment << 1
+	IgnoreVendor = ImportComment << 1
 )
 
 // SetIgnoreVendor sets the IgnoreVendor bits for build.ImportMode mode if the
@@ -54,7 +54,7 @@ const (
 // For Go version 1.5 only.  All other Go versions return the mode unmodified.
 func SetIgnoreVendor(mode build.ImportMode) build.ImportMode {
 	if os.Getenv("GO15VENDOREXPERIMENT") == "1" {
-		return mode & IgnoreVendor
+		return mode | IgnoreVendor
 	}
 	return mode
 }

@@ -15,8 +15,27 @@ import (
 	"testing"
 )
 
+var (
+	CurrentImportPath       string
+	CurrentWorkingDirectory string
+)
+
+func init() {
+	cwd, _ := os.Getwd()
+	for _, s := range build.Default.SrcDirs() {
+		if strings.HasPrefix(cwd, s) {
+			CurrentImportPath = strings.TrimLeft(strings.TrimPrefix(cwd, s), "/")
+			break
+		}
+	}
+	if CurrentImportPath == "" {
+		panic("Invalid CurrentImportPath")
+	}
+	CurrentWorkingDirectory = cwd
+}
+
 // Update if package is moved or renamed.
-const CurrentWorkingDirectory = "git.vieth.io/pkg/buildutil"
+// const CurrentImportPath = "git.vieth.io/pkg/buildutil"
 
 // Copied from go/build/build_test.go
 func TestMatch(t *testing.T) {
@@ -132,8 +151,8 @@ func TestLocalDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.ImportPath != CurrentWorkingDirectory {
-		t.Fatalf("ImportPath=%q, want %q", p.ImportPath, CurrentWorkingDirectory)
+	if p.ImportPath != CurrentImportPath {
+		t.Fatalf("ImportPath=%q, want %q", p.ImportPath, CurrentImportPath)
 	}
 }
 
