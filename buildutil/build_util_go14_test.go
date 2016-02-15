@@ -10,27 +10,10 @@ import (
 	"go/build"
 	"io"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 )
-
-func TestMultiplePackageImport(t *testing.T) {
-	_, err := Import(&Default, ".", "testdata/multi", 0)
-	mpe, ok := err.(*build.MultiplePackageError)
-	if !ok {
-		t.Fatal(`Import("testdata/multi") did not return MultiplePackageError.`)
-	}
-	want := &build.MultiplePackageError{
-		Dir:      filepath.FromSlash("testdata/multi"),
-		Packages: []string{"main", "test_package"},
-		Files:    []string{"file.go", "file_appengine.go"},
-	}
-	if !reflect.DeepEqual(mpe, want) {
-		t.Errorf("got %#v; want %#v", mpe, want)
-	}
-}
 
 type readNopCloser struct {
 	io.Reader
