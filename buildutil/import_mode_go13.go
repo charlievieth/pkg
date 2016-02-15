@@ -1,4 +1,4 @@
-// +build go1.4,!go1.5
+// +build !go1.4
 
 // Copyright 2011 The Go Authors.  All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -19,12 +19,6 @@ const (
 	// If AllowBinary is set, Import can be satisfied by a compiled
 	// package object without corresponding sources.
 	AllowBinary = build.AllowBinary
-
-	// If ImportComment is set, parse import comments on package statements.
-	// Import returns an error if it finds a comment it cannot understand
-	// or finds conflicting comments in multiple source files.
-	// See golang.org/s/go14customimport for more information.
-	ImportComment = build.ImportComment
 )
 
 // SetIgnoreVendor sets the IgnoreVendor bits for build.ImportMode mode if the

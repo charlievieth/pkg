@@ -6,7 +6,6 @@ package buildutil
 
 import (
 	"go/build"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -115,22 +114,6 @@ func TestEmptyFolderImport(t *testing.T) {
 	_, err := Import(&Default, ".", "testdata/empty", 0)
 	if _, ok := err.(*build.NoGoError); !ok {
 		t.Fatal(`Import("testdata/empty") did not return NoGoError.`)
-	}
-}
-
-func TestMultiplePackageImport(t *testing.T) {
-	_, err := Import(&Default, ".", "testdata/multi", 0)
-	mpe, ok := err.(*build.MultiplePackageError)
-	if !ok {
-		t.Fatal(`Import("testdata/multi") did not return MultiplePackageError.`)
-	}
-	want := &build.MultiplePackageError{
-		Dir:      filepath.FromSlash("testdata/multi"),
-		Packages: []string{"main", "test_package"},
-		Files:    []string{"file.go", "file_appengine.go"},
-	}
-	if !reflect.DeepEqual(mpe, want) {
-		t.Errorf("got %#v; want %#v", mpe, want)
 	}
 }
 
@@ -269,128 +252,5 @@ func shouldBuild(content []byte) bool {
 	}
 	if !reflect.DeepEqual(m, want2) {
 		t.Errorf("shoudBuild(file2) tags = %v, want %v", m, want2)
-	}
-}
-
-type readNopCloser struct {
-	io.Reader
-}
-
-func (r readNopCloser) Close() error {
-	return nil
-}
-
-var (
-	ctxtP9      = build.Context{GOARCH: "arm", GOOS: "plan9"}
-	ctxtAndroid = build.Context{GOARCH: "arm", GOOS: "android"}
-)
-
-var matchFileTests = []struct {
-	ctxt  build.Context
-	name  string
-	data  string
-	match bool
-}{
-	{ctxtP9, "foo_arm.go", "", true},
-	{ctxtP9, "foo1_arm.go", "// +build linux\n\npackage main\n", false},
-	{ctxtP9, "foo_darwin.go", "", false},
-	{ctxtP9, "foo.go", "", true},
-	{ctxtP9, "foo1.go", "// +build linux\n\npackage main\n", false},
-	{ctxtP9, "foo.badsuffix", "", false},
-	{ctxtAndroid, "foo_linux.go", "", true},
-	{ctxtAndroid, "foo_android.go", "", true},
-	{ctxtAndroid, "foo_plan9.go", "", false},
-	{ctxtAndroid, "android.go", "", true},
-	{ctxtAndroid, "plan9.go", "", true},
-	{ctxtAndroid, "plan9_test.go", "", true},
-	{ctxtAndroid, "arm.s", "", true},
-	{ctxtAndroid, "amd64.s", "", true},
-}
-
-func TestMatchFile(t *testing.T) {
-	for _, tt := range matchFileTests {
-		ctxt := tt.ctxt
-		ctxt.OpenFile = func(path string) (r io.ReadCloser, err error) {
-			if path != "x+"+tt.name {
-				t.Fatalf("OpenFile asked for %q, expected %q", path, "x+"+tt.name)
-			}
-			return &readNopCloser{strings.NewReader(tt.data)}, nil
-		}
-		ctxt.JoinPath = func(elem ...string) string {
-			return strings.Join(elem, "+")
-		}
-		match, err := MatchFile(&ctxt, "x", tt.name)
-		if match != tt.match || err != nil {
-			t.Fatalf("MatchFile(%q) = %v, %v, want %v, nil", tt.name, match, err, tt.match)
-		}
-	}
-}
-
-func TestImportCmd(t *testing.T) {
-	if runtime.GOOS == "darwin" {
-		switch runtime.GOARCH {
-		case "arm", "arm64":
-			t.Skipf("skipping on %s/%s, no valid GOROOT", runtime.GOOS, runtime.GOARCH)
-		}
-	}
-
-	p, err := Import(&Default, "cmd/internal/objfile", "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(filepath.ToSlash(p.Dir), "src/cmd/internal/objfile") {
-		t.Fatalf("Import cmd/internal/objfile returned Dir=%q, want %q", filepath.ToSlash(p.Dir), ".../src/cmd/internal/objfile")
-	}
-}
-
-var (
-	expandSrcDirPath = filepath.Join(string(filepath.Separator)+"projects", "src", "add")
-)
-
-var expandSrcDirTests = []struct {
-	input, expected string
-}{
-	{"-L ${SRCDIR}/libs -ladd", "-L /projects/src/add/libs -ladd"},
-	{"${SRCDIR}/add_linux_386.a -pthread -lstdc++", "/projects/src/add/add_linux_386.a -pthread -lstdc++"},
-	{"Nothing to expand here!", "Nothing to expand here!"},
-	{"$", "$"},
-	{"$$", "$$"},
-	{"${", "${"},
-	{"$}", "$}"},
-	{"$FOO ${BAR}", "$FOO ${BAR}"},
-	{"Find me the $SRCDIRECTORY.", "Find me the $SRCDIRECTORY."},
-	{"$SRCDIR is missing braces", "$SRCDIR is missing braces"},
-}
-
-func TestExpandSrcDir(t *testing.T) {
-	for _, test := range expandSrcDirTests {
-		output, _ := expandSrcDir(test.input, expandSrcDirPath)
-		if output != test.expected {
-			t.Errorf("%q expands to %q with SRCDIR=%q when %q is expected", test.input, output, expandSrcDirPath, test.expected)
-		} else {
-			t.Logf("%q expands to %q with SRCDIR=%q", test.input, output, expandSrcDirPath)
-		}
-	}
-}
-
-func TestShellSafety(t *testing.T) {
-	tests := []struct {
-		input, srcdir, expected string
-		result                  bool
-	}{
-		{"-I${SRCDIR}/../include", "/projects/src/issue 11868", "-I/projects/src/issue 11868/../include", true},
-		{"-X${SRCDIR}/1,${SRCDIR}/2", "/projects/src/issue 11868", "-X/projects/src/issue 11868/1,/projects/src/issue 11868/2", true},
-		{"-I/tmp -I/tmp", "/tmp2", "-I/tmp -I/tmp", false},
-		{"-I/tmp", "/tmp/[0]", "-I/tmp", true},
-		{"-I${SRCDIR}/dir", "/tmp/[0]", "-I/tmp/[0]/dir", false},
-	}
-	for _, test := range tests {
-		output, ok := expandSrcDir(test.input, test.srcdir)
-		if ok != test.result {
-			t.Errorf("Expected %t while %q expands to %q with SRCDIR=%q; got %t", test.result, test.input, output, test.srcdir, ok)
-		}
-		if output != test.expected {
-			t.Errorf("Expected %q while %q expands with SRCDIR=%q; got %q", test.expected, test.input, test.srcdir, output)
-		}
 	}
 }

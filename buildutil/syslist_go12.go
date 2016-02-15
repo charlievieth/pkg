@@ -1,4 +1,4 @@
-// +build !go1.3
+// +build go1.2,!go1.3
 
 // Go version 1.2 and previous
 
