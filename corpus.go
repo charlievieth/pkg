@@ -76,22 +76,24 @@ func (c *Corpus) notify(e Eventer) {
 
 func (c *Corpus) eventStream() {
 	c.wg.Add(1)
-	defer c.wg.Done()
-	for {
-		select {
-		case e := <-c.eventCh:
-			if !c.LogEvents {
-				break
+	go func() {
+		defer c.wg.Done()
+		for {
+			select {
+			case e := <-c.eventCh:
+				if !c.LogEvents {
+					break
+				}
+				c.log.Println(e.String())
+				if err := e.Callback(c); err != nil {
+					// TODO: Add more info to event
+					c.log.Printf("Error: %s")
+				}
+			case <-c.stop:
+				return
 			}
-			c.log.Println(e.String())
-			if err := e.Callback(c); err != nil {
-				// TODO: Add more info to event
-				c.log.Printf("Error: %s")
-			}
-		case <-c.stop:
-			return
 		}
-	}
+	}()
 }
 
 func (c *Corpus) refreshIndex() {
@@ -103,36 +105,38 @@ func (c *Corpus) refreshIndex() {
 
 func (c *Corpus) refreshIndexLoop() {
 	c.wg.Add(1)
-	defer c.wg.Done()
-	lastUpdate := time.Now()
-	for {
-		select {
-		case <-c.refreshIndexSignal:
-			if time.Since(lastUpdate) >= time.Second {
-				start := time.Now()
-				c.updateIndex()
-				e := Event{
-					typ: UpdateEvent,
-					msg: fmt.Sprintf("Index: \033[33mupdated\033[0m in %s", time.Since(start)),
+	go func() {
+		defer c.wg.Done()
+		lastUpdate := time.Now()
+		for {
+			select {
+			case <-c.refreshIndexSignal:
+				if time.Since(lastUpdate) >= time.Second {
+					start := time.Now()
+					c.updateIndex()
+					e := Event{
+						typ: UpdateEvent,
+						msg: fmt.Sprintf("Index: \033[33mupdated\033[0m in %s", time.Since(start)),
+					}
+					c.notify(&e)
+					lastUpdate = time.Now()
 				}
-				c.notify(&e)
-				lastUpdate = time.Now()
-			}
-		case <-time.After(c.IndexInterval):
-			if time.Since(lastUpdate) >= time.Second {
-				start := time.Now()
-				c.updateIndex()
-				e := Event{
-					typ: UpdateEvent,
-					msg: fmt.Sprintf("Index: \033[33mupdated\033[0m in %s", time.Since(start)),
+			case <-time.After(c.IndexInterval):
+				if time.Since(lastUpdate) >= time.Second {
+					start := time.Now()
+					c.updateIndex()
+					e := Event{
+						typ: UpdateEvent,
+						msg: fmt.Sprintf("Index: \033[33mupdated\033[0m in %s", time.Since(start)),
+					}
+					c.notify(&e)
+					lastUpdate = time.Now()
 				}
-				c.notify(&e)
-				lastUpdate = time.Now()
+			case <-c.stop:
+				return
 			}
-		case <-c.stop:
-			return
 		}
-	}
+	}()
 }
 
 func (c *Corpus) updateIndex() {
@@ -163,7 +167,7 @@ func (c *Corpus) updateIndex() {
 func (c *Corpus) Init() error {
 	logEvents := c.LogEvents
 	c.LogEvents = false
-	go c.eventStream()
+	c.eventStream()
 	if c.packages == nil {
 		c.packages = newPackageIndex(c)
 	}
@@ -174,7 +178,7 @@ func (c *Corpus) Init() error {
 		return err
 	}
 	c.LogEvents = logEvents
-	go c.refreshIndexLoop()
+	c.refreshIndexLoop()
 	return nil
 }
 
