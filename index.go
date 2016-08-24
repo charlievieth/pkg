@@ -57,6 +57,17 @@ type Index struct {
 	mu          sync.RWMutex
 }
 
+// WARN WARN
+func (x *Index) ExportedPackages() []string {
+	x.mu.Lock()
+	list := make([]string, 0, len(x.exports))
+	for s := range x.exports {
+		list = append(list, s)
+	}
+	x.mu.Unlock()
+	return list
+}
+
 func newIndex(c *Corpus) *Index {
 	return &Index{
 		c:           c,
@@ -216,19 +227,22 @@ func (x *Index) mergeIdents(oldExp, newExp map[string]Ident) {
 		return ids[:n]
 	}
 
-	del := make(map[Ident]bool)
-	add := make(map[Ident]bool)
+	del := make(map[Ident]bool, len(oldExp))
+	add := make(map[Ident]bool, len(newExp))
 	for _, id := range oldExp {
 		del[id] = true
 	}
 	for _, id := range newExp {
 		if del[id] {
-			delete(del, id)
+			del[id] = false
 		} else {
 			add[id] = true
 		}
 	}
-	for id := range del {
+	for id, ok := range del {
+		if !ok {
+			continue
+		}
 		tk := id.Info.Kind()
 		name := id.name()
 		xids := filter(id, x.idents[tk][name])
@@ -243,10 +257,10 @@ func (x *Index) mergeIdents(oldExp, newExp map[string]Ident) {
 	}
 	for id := range add {
 		tk := id.Info.Kind()
-		name := id.name()
 		if x.idents[tk] == nil {
 			x.idents[tk] = make(map[string][]Ident)
 		}
+		name := id.name()
 		x.idents[tk][name] = append(x.idents[tk][name], id)
 	}
 }
@@ -273,7 +287,8 @@ func (x *Index) addAST(ax *astIndexer) {
 	defer x.mu.Unlock()
 
 	x.initMaps()
-	x.exports[ax.current.Name] = ax.exports
+
+	x.exports[ax.current.ImportPath] = ax.exports
 	if x.packagePath[ax.current.Name] == nil {
 		x.packagePath[ax.current.Name] = make(map[string]bool)
 	}
