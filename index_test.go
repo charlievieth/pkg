@@ -1,6 +1,11 @@
 package pkg
 
 import (
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -203,5 +208,40 @@ func TestRemovePackage(t *testing.T) {
 	}
 	if !x.packagePath["B"]["B"] {
 		t.Errorf("Index: removed packagePath: %s", "B")
+	}
+}
+
+func BenchmarkAstIndexer(b *testing.B) {
+	filename := filepath.Join(runtime.GOROOT(), "src/crypto/x509/x509.go")
+	if _, err := os.Stat(filename); err != nil {
+		b.Skipf("cannot stat (%s): %s", filename, err)
+	}
+	fset := token.NewFileSet()
+	pkg := &Package{
+		Dir: filepath.Dir(filename),
+		files: map[GoFileType]FileMap{
+			GoFile: map[string]File{
+				filepath.Base(filename): File{Name: filename},
+			},
+		},
+	}
+	af, err := parser.ParseFile(fset, filename, nil, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
+	ax := &astIndexer{
+		x:       newIndex(nil),
+		fset:    fset,
+		current: pkg,
+		exports: make(map[string]Ident),
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		ax.Visit(af)
+		b.StopTimer()
+		ax.exports = make(map[string]Ident)
+		b.StartTimer()
 	}
 }
