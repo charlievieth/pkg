@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"git.vieth.io/pkg/fs"
+	"github.com/charlievieth/pkg/fs"
 )
 
 const defaultMaxDepth = 512

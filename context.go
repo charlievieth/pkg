@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"git.vieth.io/pkg/fs"
+	"github.com/charlievieth/pkg/fs"
 )
 
 // A Context provides safe-concurrent access to a build.Context, that optionally

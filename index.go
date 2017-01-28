@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"git.vieth.io/pkg/fs"
-	"git.vieth.io/pkg/util"
+	"github.com/charlievieth/pkg/fs"
+	"github.com/charlievieth/pkg/util"
 )
 
 // TODO:

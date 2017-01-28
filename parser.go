@@ -6,7 +6,7 @@ import (
 	"go/token"
 	pathpkg "path"
 
-	"git.vieth.io/pkg/fs"
+	"github.com/charlievieth/pkg/fs"
 )
 
 func parseFileName(fset *token.FileSet, filename string) (name string, ok bool) {

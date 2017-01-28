@@ -1,8 +1,9 @@
 package pkg
 
 import (
-	"git.vieth.io/pkg/fs"
 	"testing"
+
+	"github.com/charlievieth/pkg/fs"
 )
 
 func newDirtreeCorpus() {
