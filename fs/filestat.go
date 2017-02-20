@@ -89,8 +89,8 @@ func (f *fileStat) GobDecode(b []byte) error {
 }
 
 func (f *fileStat) GobEncode() ([]byte, error) {
-	buf := new(bytes.Buffer)
-	err := gob.NewEncoder(buf).Encode(f.ext())
+	var buf bytes.Buffer
+	err := gob.NewEncoder(&buf).Encode(f.ext())
 	return buf.Bytes(), err
 }
 
