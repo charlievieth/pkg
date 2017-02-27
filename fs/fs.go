@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"os"
 	pathpkg "path"
-	"sort"
 )
 
 // Limit the number of simultaneously open files and directories.
@@ -89,21 +88,13 @@ func (fs *FS) closeDirGate() {
 // describes the symbolic link.  Lstat makes no attempt to follow the link.
 // If there is an error, it will be of type *os.PathError.
 func (fs *FS) Lstat(name string) (os.FileInfo, error) {
-	fi, err := os.Lstat(name)
-	if err != nil {
-		return nil, err
-	}
-	return newFileStat(fi), nil
+	return fs.lstat(name)
 }
 
 // Stat returns a os.FileInfo describing the named file.
 // If there is an error, it will be of type *os.PathError.
 func (fs *FS) Stat(name string) (os.FileInfo, error) {
-	fi, err := os.Stat(name)
-	if err != nil {
-		return nil, err
-	}
-	return newFileStat(fi), nil
+	return fs.stat(name)
 }
 
 // ReadFile reads the file named by filename and returns the contents.
@@ -140,53 +131,25 @@ func (fs *FS) OpenFile(path string) (io.ReadCloser, error) {
 	return &fileCloser{f: f, fs: fs}, nil
 }
 
-// Readdirnames reads and returns a slice of names from directory path, in
-// sorted order.
+// Readdir reads reads the directory named by path and returns a slice of
+// os.FileInfo values as would be returned by Lstat.
+func (fs *FS) Readdir(path string) ([]os.FileInfo, error) {
+	return fs.readdir(path)
+}
+
+// Readdirnames reads and returns a slice of names from directory path.
 func (fs *FS) Readdirnames(path string) ([]string, error) {
 	fs.openDirGate()
-	defer fs.closeDirGate()
 
 	f, err := os.Open(path)
 	if err != nil {
+		fs.closeDirGate()
 		return nil, err
 	}
 	names, err := f.Readdirnames(-1)
 	f.Close()
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(names)
-	return names, nil
-}
-
-// byName, sorts os.FileInfo by name.
-type byName []os.FileInfo
-
-func (b byName) Len() int           { return len(b) }
-func (b byName) Less(i, j int) bool { return b[i].Name() < b[j].Name() }
-func (b byName) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
-
-// Readdir reads reads the directory named by path and returns a slice of
-// os.FileInfo values as would be returned by Lstat, in sorted order.
-func (fs *FS) Readdir(path string) ([]os.FileInfo, error) {
-	fs.openDirGate()
-	defer fs.closeDirGate()
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	names, err := f.Readdir(-1)
-	f.Close()
-	if err != nil {
-		return nil, err
-	}
-	fis := make([]os.FileInfo, len(names))
-	for i, n := range names {
-		fis[i] = newFileStat(n)
-	}
-	sort.Sort(byName(fis))
-	return fis, nil
+	fs.closeDirGate()
+	return names, err
 }
 
 // FilterFunc, returns if a file name should be included.
@@ -215,14 +178,17 @@ func FilterList(list []string, fn FilterFunc) []string {
 // Note: Behavior is undefined if path is not absolute.
 func (fs *FS) ReaddirFunc(path string, fn FilterFunc) ([]os.FileInfo, error) {
 	names, err := fs.Readdirnames(path)
+	if err != nil && len(names) == 0 {
+		return nil, err
+	}
 	names = FilterList(names, fn)
 	list := make([]os.FileInfo, 0, len(names))
 	for _, n := range names {
 		fi, lerr := fs.Stat(pathpkg.Join(path, n))
-		if os.IsNotExist(lerr) {
-			continue
-		}
 		if lerr != nil {
+			if os.IsNotExist(lerr) {
+				continue
+			}
 			return list, lerr
 		}
 		list = append(list, fi)
@@ -239,7 +205,7 @@ func (fs *FS) IsDir(name string) bool {
 // IsDir, returns if path name is a file.
 func (fs *FS) IsFile(name string) bool {
 	fi, err := fs.Stat(name)
-	return err == nil && !fi.IsDir()
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // default FS.

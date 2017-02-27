@@ -2,7 +2,9 @@ package fs
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -238,5 +240,18 @@ func TestFileCloser(t *testing.T) {
 	err2 := fs.Close()
 	if err1 != err2 {
 		t.Errorf("FileCloser Close error: Exp (%v) Got (%v)", n1, n2)
+	}
+}
+
+func BenchmarkReaddir(b *testing.B) {
+	path := filepath.Join(runtime.GOROOT(), "src")
+	if !IsDir(path) {
+		b.Skipf("no GOROOT/src directory: %s", path)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Readdir(path); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
