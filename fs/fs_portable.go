@@ -1,3 +1,5 @@
+// +build !darwin,!linux
+
 package fs
 
 import "os"
@@ -12,7 +14,7 @@ func (fs *FS) readdir(path string) ([]os.FileInfo, error) {
 	}
 	names, err := f.Readdir(-1)
 	f.Close()
-	if err != nil {
+	if err != nil && len(names) == 0 {
 		return nil, err
 	}
 	fis := make([]os.FileInfo, len(names))
