@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"os"
 	pathpkg "path"
+	"sync"
+	"sync/atomic"
 )
 
 // Limit the number of simultaneously open files and directories.
@@ -19,10 +21,12 @@ const (
 // An FS provides gated access to the file system.  If maxOpenFiles or
 // maxOpenDirs are not set the defaults are used.
 type FS struct {
-	maxOpenFiles int // max number of open files
-	maxOpenDirs  int // max number of open directories
+	maxOpenFiles int64 // max number of open files
+	maxOpenDirs  int64 // max number of open directories
 	fsOpenGate   chan struct{}
 	fsDirGate    chan struct{}
+	mu           sync.Mutex
+	init         int32
 }
 
 // New, returns a new FS with maxOpenFiles and maxOpenDirs.
@@ -34,51 +38,56 @@ type FS struct {
 // max open files and directories are used.
 func New(maxOpenFiles, maxOpenDirs int) *FS {
 	return &FS{
-		maxOpenFiles: maxOpenFiles,
-		maxOpenDirs:  maxOpenDirs,
+		maxOpenFiles: int64(maxOpenFiles),
+		maxOpenDirs:  int64(maxOpenDirs),
 		fsOpenGate:   make(chan struct{}, maxOpenFiles),
 		fsDirGate:    make(chan struct{}, maxOpenDirs),
 	}
 }
 
-// lazyInit, lazy initialization of FS.
 func (fs *FS) lazyInit() {
-	if fs.fsOpenGate == nil && fs.maxOpenFiles > -1 {
-		if fs.maxOpenFiles == 0 {
-			fs.maxOpenFiles = DefaultMaxOpenFiles
+	if atomic.LoadInt32(&fs.init) == 1 {
+		return
+	}
+	fs.mu.Lock()
+	if fs.fsOpenGate == nil {
+		if atomic.LoadInt64(&fs.maxOpenFiles) == 0 {
+			atomic.StoreInt64(&fs.maxOpenFiles, DefaultMaxOpenFiles)
 		}
 		fs.fsOpenGate = make(chan struct{}, fs.maxOpenFiles)
 	}
-	if fs.fsDirGate == nil && fs.maxOpenDirs > -1 {
-		if fs.maxOpenDirs == 0 {
-			fs.maxOpenDirs = DefaultMaxOpenDirs
+	if fs.fsDirGate == nil {
+		if atomic.LoadInt64(&fs.maxOpenDirs) == 0 {
+			atomic.StoreInt64(&fs.maxOpenDirs, DefaultMaxOpenDirs)
 		}
 		fs.fsDirGate = make(chan struct{}, fs.maxOpenDirs)
 	}
+	atomic.StoreInt32(&fs.init, 1)
+	fs.mu.Unlock()
 }
 
 func (fs *FS) openFileGate() {
-	if fs.maxOpenFiles > -1 {
+	if atomic.LoadInt64(&fs.maxOpenFiles) > -1 {
 		fs.lazyInit()
 		fs.fsOpenGate <- struct{}{}
 	}
 }
 
 func (fs *FS) closeFileGate() {
-	if fs.maxOpenFiles > 0 {
+	if atomic.LoadInt64(&fs.maxOpenFiles) > 0 {
 		<-fs.fsOpenGate
 	}
 }
 
 func (fs *FS) openDirGate() {
-	if fs.maxOpenDirs > -1 {
+	if atomic.LoadInt64(&fs.maxOpenDirs) > -1 {
 		fs.lazyInit()
 		fs.fsDirGate <- struct{}{}
 	}
 }
 
 func (fs *FS) closeDirGate() {
-	if fs.maxOpenDirs > 0 {
+	if atomic.LoadInt64(&fs.maxOpenDirs) > 0 {
 		<-fs.fsDirGate
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -32,7 +33,7 @@ func TestFSInit(t *testing.T) {
 
 	// Test value
 	{
-		max := 1
+		max := int64(1)
 		fs := FS{
 			maxOpenFiles: max,
 			maxOpenDirs:  max,
@@ -67,6 +68,23 @@ func TestFSInit(t *testing.T) {
 			t.Errorf("FS Init: non-nil %s", "fsDirGate")
 		}
 	}
+}
+
+func TestFSInit_Parallel(t *testing.T) {
+	const N = 1000
+	var fs FS
+	start := make(chan struct{})
+	wg := new(sync.WaitGroup)
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			fs.Readdirnames(".")
+		}()
+	}
+	close(start)
+	wg.Wait()
 }
 
 var sameFileTests = []struct {
@@ -253,5 +271,13 @@ func BenchmarkReaddir(b *testing.B) {
 		if _, err := Readdir(path); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkFileGate(b *testing.B) {
+	fs := New(100, 100)
+	for i := 0; i < b.N; i++ {
+		fs.openFileGate()
+		fs.closeFileGate()
 	}
 }
