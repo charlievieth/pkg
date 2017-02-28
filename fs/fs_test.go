@@ -274,6 +274,22 @@ func BenchmarkReaddir(b *testing.B) {
 	}
 }
 
+func BenchmarkReaddirFunc(b *testing.B) {
+	path := filepath.Join(runtime.GOROOT(), "src")
+	if !IsDir(path) {
+		b.Skipf("no GOROOT/src directory: %s", path)
+	}
+	fn := func(s string) bool {
+		return s != "" && s[0] > 'f'
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ReaddirFunc(path, fn); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkFileGate(b *testing.B) {
 	fs := New(100, 100)
 	for i := 0; i < b.N; i++ {

@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	pathpkg "path"
 	"sync"
 	"sync/atomic"
 )
@@ -37,12 +36,23 @@ type FS struct {
 // If maxOpenFiles or maxOpenDirs are equal to zero, the default
 // max open files and directories are used.
 func New(maxOpenFiles, maxOpenDirs int) *FS {
-	return &FS{
+	if maxOpenFiles == 0 {
+		maxOpenFiles = DefaultMaxOpenFiles
+	}
+	if maxOpenDirs == 0 {
+		maxOpenDirs = DefaultMaxOpenDirs
+	}
+	fs := FS{
 		maxOpenFiles: int64(maxOpenFiles),
 		maxOpenDirs:  int64(maxOpenDirs),
-		fsOpenGate:   make(chan struct{}, maxOpenFiles),
-		fsDirGate:    make(chan struct{}, maxOpenDirs),
 	}
+	if maxOpenFiles > 0 {
+		fs.fsOpenGate = make(chan struct{}, maxOpenFiles)
+	}
+	if maxOpenDirs > 0 {
+		fs.fsDirGate = make(chan struct{}, maxOpenDirs)
+	}
+	return &fs
 }
 
 func (fs *FS) lazyInit() {
@@ -186,23 +196,7 @@ func FilterList(list []string, fn FilterFunc) []string {
 //
 // Note: Behavior is undefined if path is not absolute.
 func (fs *FS) ReaddirFunc(path string, fn FilterFunc) ([]os.FileInfo, error) {
-	names, err := fs.Readdirnames(path)
-	if err != nil && len(names) == 0 {
-		return nil, err
-	}
-	names = FilterList(names, fn)
-	list := make([]os.FileInfo, 0, len(names))
-	for _, n := range names {
-		fi, lerr := fs.Stat(pathpkg.Join(path, n))
-		if lerr != nil {
-			if os.IsNotExist(lerr) {
-				continue
-			}
-			return list, lerr
-		}
-		list = append(list, fi)
-	}
-	return list, err
+	return fs.readdirfunc(path, fn)
 }
 
 // IsDir, returns if path name is a directory.

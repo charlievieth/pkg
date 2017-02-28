@@ -23,3 +23,21 @@ func (fs *FS) readdir(path string) ([]os.FileInfo, error) {
 	}
 	return fis, nil
 }
+
+// this is mostly for Windows where filtering on the results of Readdir is
+// significantly faster than filtering on the results of Readdirnames and
+// calling Lstat() in each file.
+func (fs *FS) readdirfunc(dirname string, fn FilterFunc) ([]os.FileInfo, error) {
+	fis, err := fs.Readdir(dirname)
+	if err != nil && len(fis) == 0 {
+		return nil, err
+	}
+	n := 0
+	for i := range fis {
+		if fn(fis[i].Name()) {
+			fis[n] = fis[i]
+			n++
+		}
+	}
+	return fis[:n], nil
+}

@@ -9,7 +9,26 @@ func (fs *FS) readdir(dirname string) ([]os.FileInfo, error) {
 	if err != nil && len(names) == 0 {
 		return nil, err
 	}
+	fis := make([]os.FileInfo, 0, len(names))
+	for _, filename := range names {
+		fip, lerr := fs.lstat(dirname + "/" + filename)
+		if lerr != nil {
+			if os.IsNotExist(lerr) {
+				continue
+			}
+			return fis, lerr
+		}
+		fis = append(fis, fip)
+	}
+	return fis, nil
+}
 
+func (fs *FS) readdirfunc(dirname string, fn FilterFunc) ([]os.FileInfo, error) {
+	names, err := fs.Readdirnames(dirname)
+	if err != nil && len(names) == 0 {
+		return nil, err
+	}
+	names = FilterList(names, fn)
 	fis := make([]os.FileInfo, 0, len(names))
 	for _, filename := range names {
 		fip, lerr := fs.lstat(dirname + "/" + filename)
