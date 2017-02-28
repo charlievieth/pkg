@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"go/build"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -58,13 +59,13 @@ func TestLookup(t *testing.T) {
 		ctxt: NewContext(&build.Default, 0),
 	}
 	x := PackageIndex{c: c}
-
+	goroot := runtime.GOROOT()
 	pkg := &Package{
-		Dir:        "/usr/local/go/src/bufio",
+		Dir:        filepath.Join(goroot, "src", "bufio"),
 		Name:       "bufio",
 		ImportPath: "bufio",
-		Root:       "/usr/local/go",
-		SrcRoot:    "/usr/local/go/src",
+		Root:       goroot,
+		SrcRoot:    filepath.Join(goroot, "src"),
 		Goroot:     true,
 	}
 	x.addPackage(pkg)
