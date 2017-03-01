@@ -89,10 +89,18 @@ func TestContextUpdate(t *testing.T) {
 	c := NewContext(nil, time.Minute)
 
 	// Start update goroutines.
-	for i := 0; i < 40; i++ {
+	done := make(chan struct{})
+	defer close(done)
+
+	for i := 0; i < runtime.NumCPU(); i++ {
 		go func() {
 			for {
-				c.doUpdate(randPaths())
+				select {
+				case <-done:
+					return
+				default:
+					c.doUpdate(randPaths())
+				}
 			}
 		}()
 	}
@@ -103,7 +111,7 @@ func TestContextUpdate(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			for i := 0; i < 100000; i++ {
+			for i := 0; i < 10000; i++ {
 				root := c.GOROOT()
 				if !validpaths[root] {
 					t.Errorf("root: (%s) proc: (%d) loop: (%d)", root, n, i)
