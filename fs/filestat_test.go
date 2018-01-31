@@ -134,7 +134,7 @@ func compareFileStats(f1, f2 *fileStat, t *testing.T) {
 		t.Errorf("FileStat (size): F1 (%+v) F2: (%+v)", f1, f2)
 	case f1.mode != f2.mode:
 		t.Errorf("FileStat (mode): F1 (%+v) F2: (%+v)", f1, f2)
-	case f1.modTime != f2.modTime:
+	case !f1.modTime.Equal(f2.modTime):
 		t.Errorf("FileStat (mode): F1 (%+v) F2: (%+v)", f1, f2)
 	}
 }
