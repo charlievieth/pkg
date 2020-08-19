@@ -104,9 +104,9 @@ func (m FileMap) appendFilePaths(s []string) []string {
 }
 
 // removeNotSeen, removes files not present in sorted slice seen.
-func (m FileMap) removeNotSeen(seen []string) {
+func (m FileMap) removeNotSeen(seen map[string]struct{}) {
 	for name, file := range m {
-		if sort.SearchStrings(seen, file.Name) == len(seen) {
+		if _, ok := seen[file.Name]; !ok {
 			delete(m, name)
 		}
 	}
@@ -275,12 +275,9 @@ func (p *Package) isPkgDir() bool {
 }
 
 // removeNotSeen, removes any files not listed in seen.
-func (p *Package) removeNotSeen(seen []string) {
+func (p *Package) removeNotSeen(seen map[string]struct{}) {
 	if !p.isPkgDir() {
 		return
-	}
-	if !sort.StringsAreSorted(seen) {
-		sort.Strings(seen)
 	}
 	for _, m := range p.files {
 		m.removeNotSeen(seen)
@@ -571,11 +568,11 @@ func (x *PackageIndex) indexPkg(dir string, fi os.FileInfo, files []os.FileInfo)
 	// TODO: Use the files slice
 	//
 	// Used for removing deleted/missing files.
-	seen := make([]string, 0, len(files))
+	seen := make(map[string]struct{}, len(files))
 
 	// Add new files and update any that changed.
 	for _, fi := range files {
-		seen = append(seen, fi.Name())
+		seen[fi.Name()] = struct{}{}
 		if !isGoFile(fi) {
 			continue
 		}
