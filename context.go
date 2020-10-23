@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/build"
 	"os"
@@ -20,6 +21,55 @@ type Context struct {
 	lastUpdate     time.Time
 	updateInterval time.Duration // ignored if less than or equal to zero
 	mu             sync.RWMutex
+}
+
+func (c Context) MarshalJSON() ([]byte, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	type GoContextExt struct {
+		GOARCH        string
+		GOOS          string
+		GOROOT        string
+		GOPATH        string
+		Dir           string
+		CgoEnabled    bool
+		UseAllFiles   bool
+		Compiler      string
+		BuildTags     []string
+		ReleaseTags   []string
+		InstallSuffix string
+	}
+	var goCtx *GoContextExt
+	if c.ctxt != nil {
+		goCtx = &GoContextExt{
+			GOARCH:        c.ctxt.GOARCH,
+			GOOS:          c.ctxt.GOOS,
+			GOROOT:        c.ctxt.GOROOT,
+			GOPATH:        c.ctxt.GOPATH,
+			Dir:           c.ctxt.Dir,
+			CgoEnabled:    c.ctxt.CgoEnabled,
+			UseAllFiles:   c.ctxt.UseAllFiles,
+			Compiler:      c.ctxt.Compiler,
+			BuildTags:     c.ctxt.BuildTags,
+			ReleaseTags:   c.ctxt.ReleaseTags,
+			InstallSuffix: c.ctxt.InstallSuffix,
+		}
+	}
+
+	type ContextExt struct {
+		GoContext      *GoContextExt
+		SrcDirs        []string
+		LastUpdate     time.Time
+		UpdateInterval time.Duration
+	}
+	ext := ContextExt{
+		GoContext:      goCtx,
+		SrcDirs:        c.srcDirs,
+		LastUpdate:     c.lastUpdate,
+		UpdateInterval: c.updateInterval,
+	}
+	return json.Marshal(&ext)
 }
 
 // NewContext, returns a new Context for build.Context ctxt with an update

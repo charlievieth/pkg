@@ -34,7 +34,7 @@ func loadAndDump(filename string) error {
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "    ")
-	if err := enc.Encode(c.Packages()); err != nil {
+	if err := enc.Encode(c); err != nil {
 		return err
 	}
 	if err := f.Close(); err != nil {

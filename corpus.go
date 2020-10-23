@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -30,6 +31,34 @@ type Corpus struct {
 	stop               chan bool
 	mu                 sync.RWMutex
 	wg                 sync.WaitGroup
+}
+
+func (c Corpus) MarshalJSON() ([]byte, error) {
+	type CorpusExt struct {
+		Context       *Context
+		MaxDepth      int
+		LogEvents     bool
+		IndexGoCode   bool
+		IndexThrottle float64
+		IndexInterval time.Duration
+		Idents        *Index
+		Packages      *PackageIndex
+		Dirs          map[string]*Directory
+		LastUpdate    time.Time
+	}
+	ext := CorpusExt{
+		Context:       c.ctxt,
+		MaxDepth:      c.MaxDepth,
+		LogEvents:     c.LogEvents,
+		IndexGoCode:   c.IndexGoCode,
+		IndexThrottle: c.IndexThrottle,
+		IndexInterval: c.IndexInterval,
+		Idents:        c.idents,
+		Packages:      c.packages,
+		Dirs:          c.dirs,
+		LastUpdate:    c.lastUpdate,
+	}
+	return json.Marshal(&ext)
 }
 
 // TODO: Do we care about missing GOROOT and GOPATH env vars?

@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -159,6 +160,60 @@ type Package struct {
 	Info       os.FileInfo            // File info as of last update
 	files      map[GoFileType]FileMap // Go source files indexed by type
 	err        error                  // Either NoGoError of MultiplePackageError
+}
+
+type PackageExt struct {
+	Dir        string
+	Name       string
+	ImportPath string
+	Root       string
+	SrcRoot    string
+	Goroot     bool
+	Installed  bool
+	Info       os.FileInfo
+	Files      map[GoFileType]FileMap
+	Error      *string
+}
+
+func (p Package) MarshalJSON() ([]byte, error) {
+	ext := PackageExt{
+		Dir:        p.Dir,
+		Name:       p.Name,
+		ImportPath: p.ImportPath,
+		Root:       p.Root,
+		SrcRoot:    p.SrcRoot,
+		Goroot:     p.Goroot,
+		Installed:  p.Installed,
+		Info:       p.Info,
+		Files:      p.files,
+	}
+	if p.err != nil {
+		s := p.err.Error()
+		ext.Error = &s
+	}
+	return json.Marshal(&ext)
+}
+
+func (p *Package) UnMarshalJSON(data []byte) error {
+	var ext PackageExt
+	if err := json.Unmarshal(data, &ext); err != nil {
+		return err
+	}
+	*p = Package{
+		Dir:        ext.Dir,
+		Name:       ext.Name,
+		ImportPath: ext.ImportPath,
+		Root:       ext.Root,
+		SrcRoot:    ext.SrcRoot,
+		Goroot:     ext.Goroot,
+		Installed:  ext.Installed,
+		Info:       ext.Info,
+		files:      ext.Files,
+	}
+	if ext.Error != nil && *ext.Error != "" {
+		p.err = errors.New(*ext.Error)
+	}
+	return nil
 }
 
 // Error, returns either NoGoError or MultiplePackageError.

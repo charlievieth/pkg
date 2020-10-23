@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -55,6 +56,23 @@ type Index struct {
 	exports     map[string]map[string]Ident    // "net/http" => "Client.Do" => ident
 	idents      map[TypKind]map[string][]Ident // Method => "Do" => []ident
 	mu          sync.RWMutex
+}
+
+type IndexExt struct {
+	PackagePath map[string]map[string]bool
+	Exports     map[string]map[string]Ident
+	Idents      map[TypKind]map[string][]Ident
+}
+
+func (x Index) MarshalJSON() ([]byte, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	ext := IndexExt{
+		PackagePath: x.packagePath,
+		Exports:     x.exports,
+		Idents:      x.idents,
+	}
+	return json.Marshal(&ext)
 }
 
 // WARN WARN
