@@ -197,13 +197,21 @@ func (c *Corpus) Stop() {
 
 // WARN
 func (c *Corpus) Update() {
-	for root, dir := range c.dirs {
-		t := newTreeBuilder(c, c.MaxDepth)
-		dir = t.updateDirTree(dir)
-		if dir == nil {
-			panic("NIL DIR " + root)
-		}
+	if c.packages == nil {
+		c.packages = newPackageIndex(c)
 	}
+	if c.IndexGoCode {
+		c.idents = newIndex(c)
+	}
+	c.updateIndex()
+
+	// for root, dir := range c.dirs {
+	// 	t := newTreeBuilder(c, c.MaxDepth)
+	// 	dir = t.updateDirTree(dir)
+	// 	if dir == nil {
+	// 		panic("NIL DIR " + root)
+	// 	}
+	// }
 }
 
 // initDirTree, initializes the Directory tree's at build.Context.SrcDirs().

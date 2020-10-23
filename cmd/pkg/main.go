@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +21,36 @@ func init() {
 	// }()
 }
 
+func loadAndDump(filename string) error {
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	c := pkg.NewCorpus()
+	c.IndexGoCode = true
+	c.Update()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "    ")
+	if err := enc.Encode(c.Packages()); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func main() {
+	if os.Args[1] == "dump" {
+		if err := loadAndDump(os.Args[2]); err != nil {
+			Fatal(err)
+		}
+		return
+	}
+
 	// WARN: attempt to not OOM
 	runtime.GOMAXPROCS(4)
 
